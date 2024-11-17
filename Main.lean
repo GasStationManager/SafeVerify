@@ -8,6 +8,7 @@ import Lean.CoreM
 import Lean.Replay
 --import Lean4Checker.Lean
 import Lake.Load.Manifest
+import Lean.Util.CollectAxioms
 
 open Lean Meta Core
 
@@ -38,6 +39,8 @@ unsafe def replayFromImports (module : Name)(targets: List (Name×ConstantInfo):
     if ci.kind ∈ ["theorem", "def"] then
       IO.println n
       IO.println <| ←  Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:=env'})
+      let (_,s):=(CollectAxioms.collect n).run env' |>.run {}
+      IO.println s.axioms
   if targets.length>0 then
     for (n,ci) in targets do
       if let some ci':=env'.constants.map₂.find? n then
