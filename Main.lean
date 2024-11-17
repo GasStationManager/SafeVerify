@@ -3,14 +3,25 @@ Copyright (c) 2023 Scott Morrison. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Scott Morrison
 -/
+import Lean
 import Lean.CoreM
 import Lean.Replay
 --import Lean4Checker.Lean
 import Lake.Load.Manifest
 
-open Lean
+open Lean Meta Core
 
-unsafe def replayFromImports (module : Name) : IO Unit := do
+def Lean.ConstantInfo.kind : ConstantInfo → String
+  | .axiomInfo  _ => "axiom"
+  | .defnInfo   _ => "def"
+  | .thmInfo    _ => "theorem"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo   _ => "quot" -- Not sure what this is!
+  | .inductInfo _ => "inductive"
+  | .ctorInfo   _ => "constructor"
+  | .recInfo    _ => "recursor"
+
+unsafe def replayFromImports (module : Name)(targets: List (Name×ConstantInfo):=[]) : IO <| List (Name×ConstantInfo) := do
   let mFile ← findOLean module
   unless (← mFile.pathExists) do
     throw <| IO.userError s!"object file '{mFile}' of module {module} does not exist"
@@ -22,10 +33,22 @@ unsafe def replayFromImports (module : Name) : IO Unit := do
   for name in mod.constNames, ci in mod.constants do
     newConstants := newConstants.insert name ci
   let env' ← env.replay newConstants
-  for (n,_) in env.constants.toList do
-    IO.println n
+  let ctx:={fileName:="", fileMap:=default}
+  for (n,ci) in env'.constants.map₂  do
+    if ci.kind ∈ ["theorem", "def"] then
+      IO.println n
+      IO.println <| ←  Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:=env'})
+  if targets.length>0 then
+    for (n,ci) in targets do
+      if let some ci':=env'.constants.map₂.find? n then
+        --check type
+        --if ci.type ≠ ci'.type then
+        --  throw IO.userError
+        if ci'.kind="theorem" then
+          IO.println n -- <| Lean.collectAxioms n
   env'.freeRegions
   region.free
+  return env'.constants.map₂.toList.filter (fun x=>x.2.kind∈["theorem","def"])
 
 unsafe def replayFromFresh (module : Name) : IO Unit := do
   Lean.withImportModules #[{module}] {} 0 fun env => do

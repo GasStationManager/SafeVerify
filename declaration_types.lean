@@ -4,7 +4,7 @@ import Lean.Util.Path
 import Lean.Util.SearchPath
 import Batteries.Lean.HashMap
 
-open Lean Meta
+open Lean Meta Core
 
 def Lean.ConstantInfo.kind : ConstantInfo → String
   | .axiomInfo  _ => "axiom"
