@@ -58,6 +58,7 @@ def equivDefn (ctarget cnew : ConstantInfo)(checkVal:Bool:=false) : Bool := Id.r
     && (if checkVal then tval₁.value==tval₂.value else true)
 
 unsafe def replayFile (mFile : System.FilePath)(targets: Array (Name×ConstantInfo× Array Name):=#[]) : IO <| Array (Name×ConstantInfo× Array Name) := do
+  IO.println s!"Replaying {mFile}"
   unless (← mFile.pathExists) do
     throw <| IO.userError s!"object file '{mFile}' does not exist"
   let (mod, region) ← readModuleData mFile
