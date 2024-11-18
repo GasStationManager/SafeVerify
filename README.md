@@ -8,6 +8,12 @@ Uses Environment.replay to defend against manipulation of environment.
 Checks the second file's theorems to make sure they only use the three standard axioms.
 
 # Usage
+
+First step is to compile lean file into `.olean` files. E.g.
+```
+lake env lean -o submission.olean submission.lean
+```
+Then pass the olean files to the tool:
 ```
 lake env lean --run Main.lean target.olean submission.olean
 ```
