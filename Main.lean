@@ -7,10 +7,12 @@ https://github.com/kim-em/lean-training-data/blob/master/scripts/declaration_typ
 import Lean
 import Lean.CoreM
 import Lean.Replay
-
+import Lean.Environment
 import Lean.Util.CollectAxioms
+import Batteries.Tactic.OpenPrivate
 
 open Lean Meta Core
+open private setImportedEntries finalizePersistentExtensions from Lean.Environment
 
 def Lean.ConstantInfo.kind : ConstantInfo → String
   | .axiomInfo  _ => "axiom"
@@ -76,7 +78,9 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
     newConstants := newConstants.insert name ci
-  let env' ← env.replay newConstants
+  let mut env' ← env.replay newConstants
+  env' ← setImportedEntries env' #[mod]
+  env' ← finalizePersistentExtensions env' #[mod] {}
   let ctx:={fileName:="", fileMap:=default}
   let mut ret:Array Info:= #[]
   for (n,ci) in env'.constants.map₂  do
