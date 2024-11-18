@@ -30,6 +30,12 @@ def checkAxioms (env: Environment) (n: Name): IO Unit:= do
     if a ∉ AllowedAxioms then
       throw <| IO.userError s!"{a} is not in the allowed set of standard axioms"
 
+structure Info where
+  name: Name
+  constInfo: ConstantInfo
+  axioms: Array Name
+  nonComputable: Bool
+  deriving Inhabited
 
 /-
 From Lean.Environment
@@ -55,9 +61,10 @@ def equivDefn (ctarget cnew : ConstantInfo)(checkVal:Bool:=false) : Bool := Id.r
     && tval₁.type == tval₂.type
     && tval₁.levelParams == tval₂.levelParams
     && tval₁.all == tval₂.all
+    && tval₁.safety == tval₂.safety
     && (if checkVal then tval₁.value==tval₂.value else true)
 
-unsafe def replayFile (mFile : System.FilePath)(targets: Array (Name×ConstantInfo× Array Name):=#[]) : IO <| Array (Name×ConstantInfo× Array Name) := do
+unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <| Array Info := do
   IO.println s!"Replaying {mFile}"
   unless (← mFile.pathExists) do
     throw <| IO.userError s!"object file '{mFile}' does not exist"
@@ -71,7 +78,7 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array (Name×ConstantIn
     newConstants := newConstants.insert name ci
   let env' ← env.replay newConstants
   let ctx:={fileName:="", fileMap:=default}
-  let mut ret:Array (Name× ConstantInfo×Array Name):= #[]
+  let mut ret:Array Info:= #[]
   for (n,ci) in env'.constants.map₂  do
     if ci.kind ∈ ["theorem", "def"] then
       IO.println "---"
@@ -80,9 +87,11 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array (Name×ConstantIn
       IO.println <| ←  Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:=env'})
       let (_,s):=(CollectAxioms.collect n).run env' |>.run {}
       IO.println s.axioms
-      ret:=ret.push (n,ci,s.axioms)
+      let nc:=isNoncomputable env' n
+      IO.println s!"noncomputable: {nc}"
+      ret:=ret.push ⟨ n,ci,s.axioms, nc⟩
   if targets.size>0 then
-    for (n,ci,axs) in targets do
+    for ⟨ n,ci,axs, nc⟩ in targets do
       if let some ci':=env'.constants.map₂.find? n then
         if ci.kind ≠ ci'.kind then
           throw <| IO.userError s!"{ci'.kind} {n} is not the same kind as the requirement {ci.kind} {n}"
@@ -92,6 +101,8 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array (Name×ConstantIn
         if ci'.kind=="def" then
           if Not (equivDefn ci ci' (`sorryAx ∉ axs)) then
             throw <| IO.userError s!"definition {n} does not match the requirement"
+          if (¬ nc) && isNoncomputable env' n then
+            throw <| IO.userError s!"definition {n} is noncomputable"
         checkAxioms env' n
       else
         throw <| IO.userError s!"{n} not found in submission"
