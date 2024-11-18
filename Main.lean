@@ -131,6 +131,6 @@ unsafe def main (args : List String) : IO UInt32 := do
   let targf:System.FilePath := args[0]!
   let submf:System.FilePath := args[1]!
   let targInfo ← replayFile targf
-  let _ ← replayFile submf targInfo
+  discard <| replayFile submf targInfo
 
   return 0
