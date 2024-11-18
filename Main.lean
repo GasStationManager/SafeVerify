@@ -1,0 +1,110 @@
+/-
+Adapted from https://github.com/leanprover/lean4checker/blob/master/Main.lean
+and
+https://github.com/kim-em/lean-training-data/blob/master/scripts/declaration_types.lean
+-/
+
+import Lean
+import Lean.CoreM
+import Lean.Replay
+
+import Lean.Util.CollectAxioms
+
+open Lean Meta Core
+
+def Lean.ConstantInfo.kind : ConstantInfo → String
+  | .axiomInfo  _ => "axiom"
+  | .defnInfo   _ => "def"
+  | .thmInfo    _ => "theorem"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo   _ => "quot" -- Not sure what this is!
+  | .inductInfo _ => "inductive"
+  | .ctorInfo   _ => "constructor"
+  | .recInfo    _ => "recursor"
+
+def AllowedAxioms := [`propext, `Quot.sound, `Classical.choice]
+
+def checkAxioms (env: Environment) (n: Name): IO Unit:= do
+  let (_,s):=(CollectAxioms.collect n).run env |>.run {}
+  for a in s.axioms do
+    if a ∉ AllowedAxioms then
+      throw <| IO.userError s!"{a} is not in the allowed set of standard axioms"
+
+
+/-
+From Lean.Environment
+Check if two theorems have the same type and name
+-/
+def equivThm (cinfo₁ cinfo₂ : ConstantInfo) : Bool := Id.run do
+  let .thmInfo tval₁ := cinfo₁ | false
+  let .thmInfo tval₂ := cinfo₂ | false
+  return tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.all == tval₂.all
+
+/-
+Check if two definitions have the same type and name.
+If checkVal is true, then also check their values are the same
+-/
+def equivDefn (ctarget cnew : ConstantInfo)(checkVal:Bool:=false) : Bool := Id.run do
+  let .defnInfo tval₁ := ctarget | false
+  let .defnInfo tval₂ := cnew | false
+
+  return tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.all == tval₂.all
+    && (if checkVal then tval₁.value==tval₂.value else true)
+
+unsafe def replayFile (mFile : System.FilePath)(targets: Array (Name×ConstantInfo× Array Name):=#[]) : IO <| Array (Name×ConstantInfo× Array Name) := do
+  unless (← mFile.pathExists) do
+    throw <| IO.userError s!"object file '{mFile}' does not exist"
+  let (mod, region) ← readModuleData mFile
+  --let (_, s) ← importModulesCore mod.imports
+  --  |>.run (s := { moduleNameSet := ({} : NameHashSet) })
+  --let env ← finalizeImport s #[] {} 0
+  let env ← importModules mod.imports {} 0
+  let mut newConstants := {}
+  for name in mod.constNames, ci in mod.constants do
+    newConstants := newConstants.insert name ci
+  let env' ← env.replay newConstants
+  let ctx:={fileName:="", fileMap:=default}
+  let mut ret:Array (Name× ConstantInfo×Array Name):= #[]
+  for (n,ci) in env'.constants.map₂  do
+    if ci.kind ∈ ["theorem", "def"] then
+      IO.println "---"
+      IO.println ci.kind
+      IO.println n
+      IO.println <| ←  Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:=env'})
+      let (_,s):=(CollectAxioms.collect n).run env' |>.run {}
+      IO.println s.axioms
+      ret:=ret.push (n,ci,s.axioms)
+  if targets.size>0 then
+    for (n,ci,axs) in targets do
+      if let some ci':=env'.constants.map₂.find? n then
+        if ci.kind ≠ ci'.kind then
+          throw <| IO.userError s!"{ci'.kind} {n} is not the same kind as the requirement {ci.kind} {n}"
+        if ci'.kind=="theorem" then
+          if Not (equivThm ci ci') then
+            throw <| IO.userError s!"theorem {n} does not have the same type as the requirement"
+        if ci'.kind=="def" then
+          if Not (equivDefn ci ci' (`sorryAx ∉ axs)) then
+            throw <| IO.userError s!"definition {n} does not match the requirement"
+        checkAxioms env' n
+      else
+        throw <| IO.userError s!"{n} not found in submission"
+  env'.freeRegions
+  region.free
+  return ret
+
+
+unsafe def main (args : List String) : IO UInt32 := do
+  if args.length<2 then
+    throw <| IO.userError s!"not enough arguments"
+  let targf:System.FilePath := args[0]!
+  let submf:System.FilePath := args[1]!
+  let targInfo ← replayFile targf
+  let _ ← replayFile submf targInfo
+
+  return 0
