@@ -79,8 +79,8 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
   for name in mod.constNames, ci in mod.constants do
     newConstants := newConstants.insert name ci
   let mut env' ← env.replay newConstants
-  env' ← setImportedEntries env' #[mod]
-  env' ← finalizePersistentExtensions env' #[mod] {}
+  --env' ← setImportedEntries env' #[mod]
+  --env' ← finalizePersistentExtensions env' #[mod] {}
   let testnc:=isNoncomputable env `Classical.ofNonempty
   let testnc':=isNoncomputable env' `Classical.ofNonempty
   IO.println s!"Classical.ofNonempty: {testnc} {testnc'}"
