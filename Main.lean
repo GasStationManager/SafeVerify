@@ -92,6 +92,8 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
       IO.println ci.kind
       IO.println n
       IO.println <| ←  Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:=env'})
+      if ci.kind=="def" then
+        IO.println s!":= {ci.value!}"
       let (_,s):=(CollectAxioms.collect n).run env' |>.run {}
       IO.println s.axioms
       let nc:=isNoncomputable env' n
@@ -132,5 +134,5 @@ unsafe def main (args : List String) : IO UInt32 := do
   let submf:System.FilePath := args[1]!
   let targInfo ← replayFile targf
   discard <| replayFile submf targInfo
-
+  IO.println s!"Finished with no errors."
   return 0
