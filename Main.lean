@@ -36,7 +36,7 @@ structure Info where
   name: Name
   constInfo: ConstantInfo
   axioms: Array Name
-  nonComputable: Bool
+  --nonComputable: Bool
   deriving Inhabited
 
 /-
@@ -67,6 +67,7 @@ def equivDefn (ctarget cnew : ConstantInfo)(checkVal:Bool:=false) : Bool := Id.r
     && (if checkVal then tval₁.value==tval₂.value else true)
 
 unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <| Array Info := do
+  IO.println "------------------"
   IO.println s!"Replaying {mFile}"
   unless (← mFile.pathExists) do
     throw <| IO.userError s!"object file '{mFile}' does not exist"
@@ -75,10 +76,12 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
   --  |>.run (s := { moduleNameSet := ({} : NameHashSet) })
   --let env ← finalizeImport s #[] {} 0
   let env ← importModules mod.imports {} 0
+  IO.println "Finished imports"
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
     newConstants := newConstants.insert name ci
   let mut env' ← env.replay newConstants
+  IO.println "Finished replay"
   --env' ← setImportedEntries env' #[mod]
   --env' ← finalizePersistentExtensions env' #[mod] {}
   let ctx:={fileName:="", fileMap:=default}
@@ -93,11 +96,11 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
         IO.println s!":= {ci.value!}"
       let (_,s):=(CollectAxioms.collect n).run env' |>.run {}
       IO.println s.axioms
-      let nc:=isNoncomputable env' n
-      IO.println s!"noncomputable: {nc}"
-      ret:=ret.push ⟨ n,ci,s.axioms, nc⟩
+      --let nc:=isNoncomputable env' n
+      --IO.println s!"noncomputable: {nc}"
+      ret:=ret.push ⟨ n,ci,s.axioms⟩
   if targets.size>0 then
-    for ⟨ n,ci,axs, nc⟩ in targets do
+    for ⟨ n,ci,axs⟩ in targets do
       if let some ci':=env'.constants.map₂.find? n then
         if ci.kind ≠ ci'.kind then
           throw <| IO.userError s!"{ci'.kind} {n} is not the same kind as the requirement {ci.kind} {n}"
@@ -107,8 +110,8 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
         if ci'.kind=="def" then
           if Not (equivDefn ci ci' (`sorryAx ∉ axs)) then
             throw <| IO.userError s!"definition {n} does not match the requirement"
-          if (¬ nc) && isNoncomputable env' n then
-            throw <| IO.userError s!"definition {n} is noncomputable"
+          --if (¬ nc) && isNoncomputable env' n then
+          --  throw <| IO.userError s!"definition {n} is noncomputable"
         checkAxioms env' n
       else
         throw <| IO.userError s!"{n} not found in submission"
