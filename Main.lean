@@ -81,9 +81,6 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
   let mut env' ← env.replay newConstants
   --env' ← setImportedEntries env' #[mod]
   --env' ← finalizePersistentExtensions env' #[mod] {}
-  let testnc:=isNoncomputable env `Classical.ofNonempty
-  let testnc':=isNoncomputable env' `Classical.ofNonempty
-  IO.println s!"Classical.ofNonempty: {testnc} {testnc'}"
   let ctx:={fileName:="", fileMap:=default}
   let mut ret:Array Info:= #[]
   for (n,ci) in env'.constants.map₂  do
@@ -133,6 +130,9 @@ unsafe def main (args : List String) : IO UInt32 := do
   let targf:System.FilePath := args[0]!
   let submf:System.FilePath := args[1]!
   let targInfo ← replayFile targf
-  discard <| replayFile submf targInfo
+  let task ← IO.asTask (replayFile submf targInfo)
+  if let .error e:=task.get then
+    IO.eprintln s!"found a problem in {submf}"
+    throw e
   IO.println s!"Finished with no errors."
   return 0
