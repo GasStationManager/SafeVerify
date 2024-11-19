@@ -99,6 +99,10 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
       --let nc:=isNoncomputable env' n
       --IO.println s!"noncomputable: {nc}"
       ret:=ret.push ⟨ n,ci,s.axioms⟩
+      if let .defnInfo dv := ci then
+        if dv.safety != .safe then
+          throw <| IO.userError s!"unsafe/partial function {n} detected"
+
   if targets.size>0 then
     for ⟨ n,ci,axs⟩ in targets do
       if let some ci':=env'.constants.map₂.find? n then
@@ -115,8 +119,8 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
         checkAxioms env' n
       else
         throw <| IO.userError s!"{n} not found in submission"
-  env'.freeRegions
-  region.free
+  --env'.freeRegions
+  --region.free
   return ret
 
 /-
