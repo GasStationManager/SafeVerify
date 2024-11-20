@@ -1,7 +1,7 @@
 # SafeVerify (Work In Progress)
 
 The purpose of this script is to check user's submitted Lean code and/or proof matches the specifications. Will be used by  [Code with Proofs: the Arena](https://github.com/GasStationManager/CodeProofTheArena)
-and [lean-contract-interact](https://github.com/wadimiusz/lean-contract-interact) projects as proof-checking backend. 
+and [TheoremMarketplace](https://github.com/wadimiusz/lean-contract-interact) projects as proof-checking backend. 
 
 In more detail: it takes two olean files, and checks whether the second file
 implements the theorems and definitions specified in the first file.
