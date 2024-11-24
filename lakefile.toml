@@ -17,3 +17,5 @@ name = "SafeVerify"
 [[lean_exe]]
 name = "safe_verify"
 root = "Main"
+supportInterpreter = true
+

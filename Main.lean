@@ -132,6 +132,7 @@ Uses Environment.replay to defend against manipulation of environment.
 Checks the second file's theorems to make sure they only use the three standard axioms.
 -/
 unsafe def main (args : List String) : IO UInt32 := do
+  initSearchPath (← findSysroot)
   if args.length<2 then
     throw <| IO.userError s!"not enough arguments"
   let targf:System.FilePath := args[0]!
