@@ -13,3 +13,7 @@ scope = "leanprover-community"
 
 [[lean_lib]]
 name = "SafeVerify"
+
+[[lean_exe]]
+name = "safe_verify"
+root = "Main"
