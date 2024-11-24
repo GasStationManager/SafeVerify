@@ -1,7 +1,7 @@
 name = "SafeVerify"
 version = "0.1.0"
 keywords = ["math"]
-defaultTargets = ["SafeVerify"]
+defaultTargets = ["safe_verify","SafeVerify"]
 
 [leanOptions]
 pp.unicode.fun = true # pretty-prints `fun a ↦ b`
