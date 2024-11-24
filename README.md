@@ -23,3 +23,10 @@ Then pass the olean files to the tool:
 ```
 lake env lean --run Main.lean target.olean submission.olean
 ```
+
+# Building an executable
+
+```
+lake build
+```
+will build the executable at `.lake/build/bin/safe_verify`.
