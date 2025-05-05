@@ -30,3 +30,19 @@ lake env lean --run Main.lean target.olean submission.olean
 lake build
 ```
 will build the executable at `.lake/build/bin/safe_verify`.
+
+# Verifying DeepSeek Proof V2's solutions to MiniF2F
+
+- Download the solutions from https://github.com/deepseek-ai/DeepSeek-Prover-V2/blob/main/minif2f-solutions.zip
+- Extract to directory `minif2f-deepseek`
+- In directory `minif2f-deepseek`: 
+```
+python getTargs.py valid
+python getTargs.py test
+```
+- In the repo directory:
+```
+python verify.py minif2f-deepseek/valid
+python verify.py minif2f-deepseek/test
+```
+
