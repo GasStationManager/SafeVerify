@@ -8,10 +8,13 @@ import Lean
 import Lean.CoreM
 import Lean.Replay
 import Lean.Environment
-import Lean.Util.CollectAxioms
+--import Lean.Util.CollectAxioms
+import Lean.Elab.Command
+import Lean.Elab.Print
 import Batteries.Tactic.OpenPrivate
 
 open Lean Meta Core
+--open Command from Lean.Elab
 open private setImportedEntries finalizePersistentExtensions from Lean.Environment
 
 def Lean.ConstantInfo.kind : ConstantInfo → String
@@ -27,7 +30,7 @@ def Lean.ConstantInfo.kind : ConstantInfo → String
 def AllowedAxioms := [`propext, `Quot.sound, `Classical.choice]
 
 def checkAxioms (env: Environment) (n: Name): IO Unit:= do
-  let (_,s):=(CollectAxioms.collect n).run env |>.run {}
+  let (_,s):=(Lean.Elab.Command.CollectAxioms.collect n).run env |>.run {}
   for a in s.axioms do
     if a ∉ AllowedAxioms then
       throw <| IO.userError s!"{a} is not in the allowed set of standard axioms"
@@ -94,7 +97,7 @@ unsafe def replayFile (mFile : System.FilePath)(targets: Array Info:=#[]) : IO <
       IO.println <| ←  Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:=env'})
       if ci.kind=="def" then
         IO.println s!":= {ci.value!}"
-      let (_,s):=(CollectAxioms.collect n).run env' |>.run {}
+      let (_,s):=(Lean.Elab.Command.CollectAxioms.collect n).run env' |>.run {}
       IO.println s.axioms
       --let nc:=isNoncomputable env' n
       --IO.println s!"noncomputable: {nc}"
