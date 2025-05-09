@@ -15,11 +15,30 @@ In more detail: it takes two olean files, and checks whether the second file
 implements the theorems and definitions specified in the first file.
 The first file (the target) may contain theorem / function signatures with `sorry` in their bodies;
 the second file is expected to fill them.
-Uses Environment.replay to defend against manipulation of environment.
+Uses `Environment.replay` to defend against manipulation of environment.
 Checks the second file's theorems to make sure they only use the three standard axioms.
 
 Most of the code is adapted from [lean4checker](https://github.com/leanprover/lean4checker/). With suggestions taken from users on [Lean Zulip](https://leanprover.zulipchat.com/).
 
+# List of checks performed by the script
+
+- For both input files, run the content of the files through `Environment.replay`.
+  - This is the same check as what `lean4checker` performs, re-checking each declaration with the kernel. Emits an exception if a declaration is not accepted by the kernel (possibly due to environment manipulation).
+  - This only replays the content of the source file, not the imports. To also replay the imports, you'll need to modify the script to match what `lean4checker --fresh` does.
+- The remaining checks are done on the replayed environments of both files. This ensures that the checks are not affected by any environment manipulations
+- For each declaration from the target file, make sure a declaration of the same name, kind (def / theorem) and type is in the source file.
+- For definitions, also check that their bodies are the same. Execpt for cases where the target file's definition depends on `sorry`, in which case the submission file's definition body is allowed to be different.
+  - This tries to capture both the case of complete definitions that are not meant to be changed, and definition stubs with sorrys that are meant to be filled.
+  - What if there is a function `g` that is complete, but in its body calls a function `f` that contains a sorry? Then function `g` also depends on `sorry` and therefore its body (not type) can be modified. If you don't want `g` to be modified, one approach is to make `g` take a function (with f's type) as input. Or use a different mechansim to denote which defs / theorems are allowed to be modified. 
+- Check the submission file's definitions and theorems to make sure they only depends on the three standard axioms: `propext`, `Quot.sound`, `Classical.choice`.
+  - uses `CollectAxioms.collect`
+  - You may modify the `AllowedAxioms` list in the script to tighten or widen the set of allowed axioms.
+- For each definition in the target or submission file, if it is marked `partial` or `unsafe`, throw an exception.
+  - This requirement is perhaps more specific to the use case of verifying [solutions to coding tasks with proofs of correctness](https://github.com/GasStationManager/CodeProofTheArena). There the use of partial/unsafe functions could allow infinite loops that satisfy the type requirement.
+
+Things that SafeVerify does not check, that you may want to check via other means:
+
+- Use of keywords like `implemented_by`, `extern`, `uncomputable`: these are difficult to catch at the level of olean files which SafeVerify works in, but depending on use case you may choose to scan for and ban then at the source level. see e.g. [judge.py in CodeProofTheArena](https://github.com/GasStationManager/CodeProofTheArena/blob/main/app/services/judge.py).
 
 # Usage
 
