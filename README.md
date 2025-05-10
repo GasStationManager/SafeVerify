@@ -24,9 +24,9 @@ Most of the code is adapted from [lean4checker](https://github.com/leanprover/le
 
 - For both input files, run the content of the files through `Environment.replay`.
   - This is the same check as what `lean4checker` performs, re-checking each declaration with the kernel. Emits an exception if a declaration is not accepted by the kernel (possibly due to environment manipulation).
-  - This only replays the content of the source file, not the imports. To also replay the imports, you'll need to modify the script to match what `lean4checker --fresh` does.
+  - This only replays the content of the file, not the imports. To also replay the imports, you'll need to modify the script to match what `lean4checker --fresh` does.
 - The remaining checks are done on the replayed environments of both files. This ensures that the checks are not affected by any environment manipulations
-- For each declaration from the target file, make sure a declaration of the same name, kind (def / theorem) and type is in the source file.
+- For each declaration from the target file, make sure a declaration of the same name, kind (def / theorem) and type is in the submission file.
 - For definitions, also check that their bodies are the same. Execpt for cases where the target file's definition depends on `sorry`, in which case the submission file's definition body is allowed to be different.
   - This tries to capture both the case of complete definitions that are not meant to be changed, and definition stubs with sorrys that are meant to be filled.
   - What if there is a function `g` that is complete, but in its body calls a function `f` that contains a sorry? Then function `g` also depends on `sorry` and therefore its body (not type) can be modified. If you don't want `g` to be modified, one approach is to make `g` take a function (with f's type) as input. Or use a different mechansim to denote which defs / theorems are allowed to be modified. 
@@ -38,7 +38,7 @@ Most of the code is adapted from [lean4checker](https://github.com/leanprover/le
 
 Things that SafeVerify does not check, that you may want to check via other means:
 
-- Use of keywords like `implemented_by`, `extern`, `uncomputable`: these are difficult to catch at the level of olean files which SafeVerify works in, but depending on use case you may choose to scan for and ban then at the source level. see e.g. [judge.py in CodeProofTheArena](https://github.com/GasStationManager/CodeProofTheArena/blob/main/app/services/judge.py).
+- Use of keywords like `implemented_by`, `extern`, `uncomputable`: these are difficult to catch at the level of olean files which SafeVerify works in, but depending on use case you may choose to scan for and ban them at the source level. see e.g. [judge.py in CodeProofTheArena](https://github.com/GasStationManager/CodeProofTheArena/blob/main/app/services/judge.py).
 
 # Usage
 
