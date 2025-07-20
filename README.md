@@ -4,6 +4,7 @@ The purpose of this script is to check whether a file of submitted Lean code and
 This is safer than direct checking with the Lean compiler or REPL, because it guards against potential exploits, including manipulation of environment via metaprogramming,
 using additional axioms, and exploitation of buggy tactics.
 Currently it serves as the proof-checking backend of
+- [Provably-Correct Vibe Coding](http://ProvablyCorrectVibeCoding.com), a web app for vibe coding in Lean,
 - [Code with Proofs: the Arena](https://github.com/GasStationManager/CodeProofTheArena), a website for coding problems with proofs of correctness, and
 - [TheoremMarketplace](https://github.com/wadimiusz/lean-contract-interact), smart contracts for theorem bounties.
 
