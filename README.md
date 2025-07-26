@@ -8,11 +8,12 @@ Currently it serves as the proof-checking backend of
 - [Code with Proofs: the Arena](https://github.com/GasStationManager/CodeProofTheArena), a website for coding problems with proofs of correctness, and
 - [TheoremMarketplace](https://github.com/wadimiusz/lean-contract-interact), smart contracts for theorem bounties.
 
-The branch `minif2f-deepseek-check` contains a version backported to Lean 4.9.0. This can be used to check [DeepSeek Prover V2's solutions to MiniF2F](https://github.com/deepseek-ai/DeepSeek-Prover-V2/tree/main). Similarly, the branch `minif2f-kimina-check` contains a version with Lean 4.15.0 that can be used to check [Kimina-Prover-Preview's solutions to MiniF2F](https://github.com/MoonshotAI/Kimina-Prover-Preview). The branch `abc-trinity-check` contains a version with Lean 4.20.0 that can be used to check [Trinity's autoformalization of the de Bruijin bound on the ABC conjecture](https://github.com/morph-labs/lean-abc-true-almost-always/).
+The branch `minif2f-deepseek-check` contains a version backported to Lean 4.9.0. This can be used to check [DeepSeek Prover V2's solutions to MiniF2F](https://github.com/deepseek-ai/DeepSeek-Prover-V2/tree/main). Similarly, the branch `minif2f-kimina-check` contains a version with Lean 4.15.0 that can be used to check [Kimina-Prover-Preview's and Kimina-Prover's solutions to MiniF2F](https://github.com/MoonshotAI/Kimina-Prover-Preview). The branch `abc-trinity-check` contains a version with Lean 4.20.0 that can be used to check [Trinity's autoformalization of the de Bruijin bound on the ABC conjecture](https://github.com/morph-labs/lean-abc-true-almost-always/). The branch `seed-prover-check` contains a version with Lean 4.14.0, that can be used to check [Seed Prover's published solutions, including IMO 2025](https://github.com/ByteDance-Seed/Seed-Prover/tree/main/SeedProver).
+
 
 This is part of a broader effort to create [safe and hallucination-free coding AIs](https://gasstationmanager.github.io/ai/2024/11/04/a-proposal.html).
 
-In more detail: it takes two olean files, and checks whether the second file
+In more detail: the script takes two olean files, and checks whether the second file
 implements the theorems and definitions specified in the first file.
 The first file (the target) may contain theorem / function signatures with `sorry` in their bodies;
 the second file is expected to fill them.
