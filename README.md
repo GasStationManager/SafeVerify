@@ -40,7 +40,7 @@ Most of the code is adapted from [lean4checker](https://github.com/leanprover/le
 
 Things that SafeVerify does not check, that you may want to check via other means:
 
-- Use of keywords like `implemented_by`, `extern`, `uncomputable`: these are difficult to catch at the level of olean files which SafeVerify works in, but depending on use case you may choose to scan for and ban them at the source level. see e.g. [judge.py in CodeProofTheArena](https://github.com/GasStationManager/CodeProofTheArena/blob/main/app/services/judge.py).
+- Use of keywords like `implemented_by`, `extern`, `noncomputable`: these are difficult to catch at the level of olean files which SafeVerify works in, but depending on use case you may choose to scan for and ban them at the source level. see e.g. [judge.py in CodeProofTheArena](https://github.com/GasStationManager/CodeProofTheArena/blob/main/app/services/judge.py).
 
 # Usage
 
