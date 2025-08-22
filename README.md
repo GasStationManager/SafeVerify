@@ -58,4 +58,8 @@ lake env lean --run Main.lean target.olean submission.olean
 ```
 lake build
 ```
-will build the executable at `.lake/build/bin/safe_verify`.
+will build the script as an executable at `.lake/build/bin/safe_verify`. You can then run the executable by
+```
+lake exe safe_verify target.olean submission.olean
+```
+
