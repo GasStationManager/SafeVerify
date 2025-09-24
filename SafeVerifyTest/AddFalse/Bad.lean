@@ -14,4 +14,4 @@ elab "add_false" : command => do
 add_false
 
 theorem falseThm : False :=
-   false
+  false
