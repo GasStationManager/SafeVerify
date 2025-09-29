@@ -1,5 +1,1 @@
-
-
-
-
 theorem falseThm : False := sorry
