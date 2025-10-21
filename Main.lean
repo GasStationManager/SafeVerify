@@ -5,15 +5,10 @@ https://github.com/kim-em/lean-training-data/blob/master/scripts/declaration_typ
 -/
 
 import Lean
-import Lean.CoreM
-import Lean.Replay
-import Lean.Environment
-import Lean.Util.CollectAxioms
-import Batteries.Tactic.OpenPrivate
 import Cli
 
 open Lean Meta Core
-open private setImportedEntries finalizePersistentExtensions from Lean.Environment
+-- open pri setImportedEntries finalizePersistentExtensions from Lean.Environment
 
 def Lean.ConstantInfo.kind : ConstantInfo → String
   | .axiomInfo  _ => "axiom"
@@ -139,6 +134,7 @@ def replayFile (filePath : System.FilePath) : IO (HashMap Name Info) := do
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
+  IO.println s!"Reading file {filePath}. Got string {← IO.FS.readFile filePath}"
   let (mod, _) ← readModuleData filePath
   let env ← importModules mod.imports {} 0
   IO.println "Finished imports"
@@ -179,8 +175,10 @@ Uses Environment.replay to defend against manipulation of environment.
 Checks the second file's theorems to make sure they only use the three standard axioms.
 -/
 def runMain (p : Parsed) : IO UInt32 := do
-  let targetFile  := p.positionalArg! "submission" |>.as! System.FilePath
-  let submissionFile  := p.positionalArg! "target" |>.as! System.FilePath
+  IO.println s!"Currently running on the Lean version: {Lean.versionString}"
+  let targetFile  := p.positionalArg! "target" |>.as! System.FilePath
+  let submissionFile  := p.positionalArg! "submission" |>.as! System.FilePath
+  IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
   runSafeVerify targetFile submissionFile
   return 0
 
@@ -192,8 +190,8 @@ def mainCmd : Cmd := `[Cli|
   -- TODO: add flags to control which axioms and allowed and so on.
 
   ARGS:
-    submisison : System.FilePath; "The submission file. "
     target : System.FilePath; "The target file"
+    submission : System.FilePath; "The submission file"
 ]
 
 def main (args : List String) : IO UInt32 := do

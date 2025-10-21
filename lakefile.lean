@@ -10,10 +10,10 @@ abbrev safeVerifyLeanOptions : Array LeanOption := #[
 package «SafeVerify» where
 
 require mathlib from git
-  "https://github.com/leanprover-community/mathlib4.git" @ "v4.20.1"
+  "https://github.com/leanprover-community/mathlib4.git" @ "v4.20.0"
 
 require Cli from git
-  "https://github.com/leanprover-community/lean4-cli.git" @ "v4.20.1"
+  "https://github.com/leanprover/lean4-cli.git" @ "v4.20.0"
 
 @[default_target]
 lean_lib SafeVerify where
