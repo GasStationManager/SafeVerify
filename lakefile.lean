@@ -7,7 +7,7 @@ abbrev safeVerifyLeanOptions : Array LeanOption := #[
     ⟨`autoImplicit, false⟩,
 ]
 
-package «SafeVerify» where
+package SafeVerify
 
 require mathlib from git
   "https://github.com/leanprover-community/mathlib4.git" @ "v4.20.0"

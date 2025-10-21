@@ -8,7 +8,6 @@ import Lean
 import Cli
 
 open Lean Meta Core
--- open pri setImportedEntries finalizePersistentExtensions from Lean.Environment
 
 def Lean.ConstantInfo.kind : ConstantInfo → String
   | .axiomInfo  _ => "axiom"
@@ -66,18 +65,18 @@ open Std
 a hashmap storing the infos corresponding to all the theorems and definitions in the file. -/
 def processFileDeclarations
     (env : Environment) : IO <| HashMap Name Info := do
-  let ctx := {fileName:="", fileMap:= default}
+  -- let ctx : Core.Context := {fileName:="", fileMap:= default}
   let mut out : HashMap Name Info := {}
   for (n, ci) in env.constants.map₂  do
     if ci.kind ∈ ["theorem", "def"] then
-      IO.println "---"
-      IO.println ci.kind
-      IO.println n
-      IO.println <| ← Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:= env})
-      if ci.kind == "def" then
-        IO.println s!":= {ci.value!}"
+      -- IO.println "---"
+      -- IO.println ci.kind
+      -- IO.println n
+      -- IO.println <| ← Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:= env})
+      -- if ci.kind == "def" then
+        -- IO.println s!":= {ci.value!}"
       let (_, s) := (CollectAxioms.collect n).run env |>.run {}
-      IO.println s.axioms
+      -- IO.println s.axioms
       out := out.insert n ⟨n, ci, s.axioms⟩
       if let .defnInfo dv := ci then
         if dv.safety != .safe then
@@ -129,20 +128,21 @@ def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVer
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
-def replayFile (filePath : System.FilePath) : IO (HashMap Name Info) := do
+def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := do
   IO.println "------------------"
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
-  IO.println s!"Reading file {filePath}. Got string {← IO.FS.readFile filePath}"
-  let (mod, _) ← readModuleData filePath
+  let name ← moduleNameOfFileName filePath none
+  let oleanPath ← findOLean name
+  let (mod, _) ← readModuleData oleanPath
   let env ← importModules mod.imports {} 0
-  IO.println "Finished imports"
+  IO.println "Finished setting up the environement."
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
     newConstants := newConstants.insert name ci
   let env ← env.replay newConstants
-  IO.println "Finished replay"
+  IO.println s!"Finished replay. Found {newConstants.size} declarations."
   unsafe processFileDeclarations env
 
 -- TODO: implement option to store ouput as a JSON file (with outcome for each result).
@@ -175,7 +175,7 @@ Uses Environment.replay to defend against manipulation of environment.
 Checks the second file's theorems to make sure they only use the three standard axioms.
 -/
 def runMain (p : Parsed) : IO UInt32 := do
-  IO.println s!"Currently running on the Lean version: {Lean.versionString}"
+  IO.println s!"Currently running on Lean v{Lean.versionString}"
   let targetFile  := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile  := p.positionalArg! "submission" |>.as! System.FilePath
   IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
