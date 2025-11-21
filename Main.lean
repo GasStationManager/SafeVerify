@@ -25,9 +25,12 @@ structure Info where
   name : Name
   constInfo : ConstantInfo
   axioms : Array Name
-  deriving Inhabited
+deriving Inhabited
 
-def checkAxioms (info : Info) : Bool:= Id.run do
+instance : ToString Info where
+  toString info := s!"Name: {info.name}. Axioms: {info.axioms}."
+
+def checkAxioms (info : Info) : Bool := Id.run do
   for a in info.axioms do
     if a ∉ AllowedAxioms then return false
   return true
@@ -120,7 +123,7 @@ def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVer
         return {submissionConstant := info, targetConstant := ci', failureMode := some .thmType}
       if ci'.kind == "def" && !equivDefn ci ci' (`sorryAx ∉ axs)  then
         return {submissionConstant := info, targetConstant := ci', failureMode := some .defnCheck}
-      if checkAxioms info && !checkAxioms info' then
+      if !checkAxioms info' then
         return {submissionConstant := info, targetConstant := ci', failureMode := some .axioms}
       return {submissionConstant := info, targetConstant := ci', failureMode := none}
     else
@@ -129,13 +132,10 @@ def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVer
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
 def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := do
-  IO.println "------------------"
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
-  let name ← moduleNameOfFileName filePath none
-  let oleanPath ← findOLean name
-  let (mod, _) ← readModuleData oleanPath
+  let (mod, _) ← readModuleData filePath
   let env ← importModules mod.imports {} 0
   IO.println "Finished setting up the environement."
   let mut newConstants := {}
@@ -150,13 +150,17 @@ def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := d
 /-- Run the main SafeVerify check on a pair of file (the targetFile containing statements and the
 submission file containing proofs). -/
 def runSafeVerify (targetFile submissionFile : System.FilePath) : IO Unit := do
+  IO.println "------------------"
   let targetInfo ← replayFile targetFile
+  IO.println "------------------"
   let submissionInfo ← replayFile submissionFile
   let checkOutcome := checkTargets submissionInfo targetInfo
-  for (_, ⟨_, _, failure?⟩) in checkOutcome do
+  IO.println "------------------"
+  for (name, ⟨_, _, failure?⟩) in checkOutcome do
     if failure?.isSome then
-    IO.eprintln s!"found a problem in {submissionFile}"
-  IO.println s!"Finished with no errors."
+    IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}"
+  IO.println "------------------"
+  IO.println s!"Finished."
   -- TODO: change this
   return
 
