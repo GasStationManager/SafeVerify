@@ -22,7 +22,7 @@ Checks the second file's theorems to make sure they only use the three standard 
 
 Most of the code is adapted from [lean4checker](https://github.com/leanprover/lean4checker/). With suggestions taken from users on [Lean Zulip](https://leanprover.zulipchat.com/).
 
-# List of checks performed by the script
+## List of checks performed by the script
 
 - For both input files, run the content of the files through `Environment.replay`.
   - This is the same check as what `lean4checker` performs, re-checking each declaration with the kernel. Emits an exception if a declaration is not accepted by the kernel (possibly due to environment manipulation).
@@ -41,8 +41,9 @@ Most of the code is adapted from [lean4checker](https://github.com/leanprover/le
 Things that SafeVerify does not check, that you may want to check via other means:
 
 - Use of keywords like `implemented_by`, `extern`, `noncomputable`: these are difficult to catch at the level of olean files which SafeVerify works in, but depending on use case you may choose to scan for and ban them at the source level. see e.g. [judge.py in CodeProofTheArena](https://github.com/GasStationManager/CodeProofTheArena/blob/main/app/services/judge.py).
+- Potential attacks that exploit code execution during compilation to modify the filesystem. You may want to do compilation in a sandbox to produce the olean files, then pass the olean files to SafeVerify.
 
-# Usage
+## Usage
 
 First step is to compile lean files into `.olean` files. E.g.
 ```
@@ -53,7 +54,7 @@ Then pass the olean files to the tool:
 lake env lean --run Main.lean target.olean submission.olean
 ```
 
-# Building an executable
+## Building an executable
 
 ```
 lake build
@@ -63,3 +64,6 @@ will build the script as an executable at `.lake/build/bin/safe_verify`. You can
 lake exe safe_verify target.olean submission.olean
 ```
 
+## What if the proof contains `native_decide`?
+
+Currently, proofs containing `native_decide` will not pass SafeVerify, partially due to the additional dependence on the axoim `ofReduceBool`, but also the fact that a proof term is not produced, and therefore cannot be sent to the kernel. You may consider using [ReplaceNativeDecide](https://github.com/GasStationManager/ReplaceNativeDecide) to replace the uses of `native_decide` with explicit proofs, then pass the updated proof to SafeVerify so that the rest of the proof can be checked.
