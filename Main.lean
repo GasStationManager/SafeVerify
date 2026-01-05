@@ -63,7 +63,7 @@ def equivDefn (ctarget cnew : ConstantInfo) (checkVal:Bool:=false) : Bool := Id.
     && (if checkVal then tval₁.value == tval₂.value else true)
 
 /-
-Check if two opaue constants are the same
+Check if two opaque constants are the same
 -/
 def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
   let .opaqueInfo tval₁ := ctarget | false
@@ -73,7 +73,7 @@ def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
     && tval₁.type == tval₂.type
     && tval₁.levelParams == tval₂.levelParams
     && tval₁.all == tval₂.all
-    && tval₁.safety == tval₂.safety
+    && tval₁.isUnsafe == tval₂.isUnsafe
     && tval₁.value == tval₂.value
 
 open Std
