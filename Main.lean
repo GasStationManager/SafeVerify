@@ -140,6 +140,8 @@ def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := d
   IO.println "Finished setting up the environement."
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
+    if ci.isUnsafe || ci.isPartial then
+      throw <| IO.userError s!"unsafe/partial constant {name} detected"
     newConstants := newConstants.insert name ci
   let env ← env.replay newConstants
   IO.println s!"Finished replay. Found {newConstants.size} declarations."
