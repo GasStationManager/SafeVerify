@@ -62,6 +62,20 @@ def equivDefn (ctarget cnew : ConstantInfo) (checkVal:Bool:=false) : Bool := Id.
     && tval₁.safety == tval₂.safety
     && (if checkVal then tval₁.value == tval₂.value else true)
 
+/-
+Check if two opaue constants are the same
+-/
+def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
+  let .opaqueInfo tval₁ := ctarget | false
+  let .opaqueInfo tval₂ := cnew | false
+
+  return tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.all == tval₂.all
+    && tval₁.safety == tval₂.safety
+    && tval₁.value == tval₂.value
+
 open Std
 
 /-- Takes the environment obtained after replaying all the constant in a file and outputs
@@ -71,7 +85,7 @@ def processFileDeclarations
   -- let ctx : Core.Context := {fileName:="", fileMap:= default}
   let mut out : HashMap Name Info := {}
   for (n, ci) in env.constants.map₂  do
-    if ci.kind ∈ ["theorem", "def"] then
+    if ci.kind ∈ ["theorem", "def", "opaque"] then
       -- IO.println "---"
       -- IO.println ci.kind
       -- IO.println n
@@ -81,9 +95,6 @@ def processFileDeclarations
       let (_, s) := (CollectAxioms.collect n).run env |>.run {}
       -- IO.println s.axioms
       out := out.insert n ⟨n, ci, s.axioms⟩
-      if let .defnInfo dv := ci then
-        if dv.safety != .safe then
-          throw <| IO.userError s!"unsafe/partial function {n} detected"
   return out
 
 /-- The failure modes that can occur when running the safeverify check on a single declaration. -/
@@ -95,6 +106,8 @@ inductive CheckFailure
   | thmType
   /-- Used when the declaration is a definition but has a different type or value to the target. -/
   | defnCheck
+  /-- Used when the declaration is opaque but has a different type or value to the target. -/
+  | opaqueCheck
   /-- Used when the value of a declaration uses a forbiden axiom. -/
   | axioms
   /-- Used when the corresponding target declaration wasn't found.-/
@@ -123,6 +136,8 @@ def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVer
         return {submissionConstant := info, targetConstant := ci', failureMode := some .thmType}
       if ci'.kind == "def" && !equivDefn ci ci' (`sorryAx ∉ axs)  then
         return {submissionConstant := info, targetConstant := ci', failureMode := some .defnCheck}
+      if ci'.kind == "opaque" && !equivOpaq ci ci' then
+        return {submissionConstant := info, targetConstant := ci', failureMode := some .opaqueCheck}
       if !checkAxioms info' then
         return {submissionConstant := info, targetConstant := ci', failureMode := some .axioms}
       return {submissionConstant := info, targetConstant := ci', failureMode := none}
@@ -131,7 +146,7 @@ def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVer
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
-def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := do
+def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name _root_.Info) := do
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
@@ -140,8 +155,10 @@ def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := d
   IO.println "Finished setting up the environement."
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
-    if ci.isUnsafe || ci.isPartial then
-      throw <| IO.userError s!"unsafe/partial constant {name} detected"
+    if ci.isUnsafe then
+      throw <| IO.userError s!"unsafe constant {name} detected"
+    if disallowPartial && ci.isPartial then
+      throw <| IO.userError s!"partial constant {name} detected"
     newConstants := newConstants.insert name ci
   let env ← env.replay newConstants
   IO.println s!"Finished replay. Found {newConstants.size} declarations."
@@ -151,11 +168,11 @@ def replayFile (filePath : System.FilePath) : IO (HashMap Name _root_.Info) := d
 
 /-- Run the main SafeVerify check on a pair of file (the targetFile containing statements and the
 submission file containing proofs). -/
-def runSafeVerify (targetFile submissionFile : System.FilePath) : IO Unit := do
+def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial : Bool) : IO Unit := do
   IO.println "------------------"
   let targetInfo ← replayFile targetFile
   IO.println "------------------"
-  let submissionInfo ← replayFile submissionFile
+  let submissionInfo ← replayFile submissionFile disallowPartial
   let checkOutcome := checkTargets submissionInfo targetInfo
   IO.println "------------------"
   for (name, ⟨_, _, failure?⟩) in checkOutcome do
@@ -183,10 +200,11 @@ Checks the second file's theorems to make sure they only use the three standard 
 def runMain (p : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
   IO.println s!"Currently running on Lean v{Lean.versionString}"
+  let disallowPartial := p.hasFlag "disallow-partial"
   let targetFile  := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile  := p.positionalArg! "submission" |>.as! System.FilePath
   IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
-  runSafeVerify targetFile submissionFile
+  runSafeVerify targetFile submissionFile disallowPartial
   return 0
 
 /-- The main CLI interface for `SafeVerify`. This will be expanded as we add more
@@ -195,6 +213,8 @@ def mainCmd : Cmd := `[Cli|
   mainCmd VIA runMain;
   "Run SafeVerify on a pair of files (TargetFile, SubmissionFile). "
   -- TODO: add flags to control which axioms and allowed and so on.
+  FLAGS:
+    "disallow-partial"; "Disallow partial definitions"
 
   ARGS:
     target : System.FilePath; "The target file"
