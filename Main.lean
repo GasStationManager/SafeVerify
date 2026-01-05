@@ -170,7 +170,7 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
 submission file containing proofs). -/
 def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial : Bool) : IO Unit := do
   IO.println "------------------"
-  let targetInfo ← replayFile targetFile
+  let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
   let submissionInfo ← replayFile submissionFile disallowPartial
   let checkOutcome := checkTargets submissionInfo targetInfo
