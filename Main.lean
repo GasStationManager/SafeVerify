@@ -179,6 +179,7 @@ Uses Environment.replay to defend against manipulation of environment.
 Checks the second file's theorems to make sure they only use the three standard axioms.
 -/
 def runMain (p : Parsed) : IO UInt32 := do
+  initSearchPath (← findSysroot)
   IO.println s!"Currently running on Lean v{Lean.versionString}"
   let targetFile  := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile  := p.positionalArg! "submission" |>.as! System.FilePath
@@ -190,7 +191,7 @@ def runMain (p : Parsed) : IO UInt32 := do
 functionalities.-/
 def mainCmd : Cmd := `[Cli|
   mainCmd VIA runMain;
-  "Run SafeVerify on a pair of files (SubmissionFile, TargetFile). "
+  "Run SafeVerify on a pair of files (TargetFile, SubmissionFile). "
   -- TODO: add flags to control which axioms and allowed and so on.
 
   ARGS:
