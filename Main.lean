@@ -173,6 +173,9 @@ def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial
   let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
   let submissionInfo ← replayFile submissionFile disallowPartial
+  for (n, info) in submissionInfo do
+    if !checkAxioms info then
+      throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
   let checkOutcome := checkTargets submissionInfo targetInfo
   IO.println "------------------"
   for (name, ⟨_, _, failure?⟩) in checkOutcome do
