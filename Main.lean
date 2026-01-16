@@ -113,6 +113,15 @@ inductive CheckFailure
   /-- Used when the corresponding target declaration wasn't found.-/
   | notFound
 
+instance : ToString CheckFailure where
+  toString
+    | .kind k1 k2 => s!"kind mismatch (expected {k1}, got {k2})"
+    | .thmType => "theorem type mismatch"
+    | .defnCheck => "definition type or value mismatch"
+    | .opaqueCheck => "opaque type or value mismatch"
+    | .axioms => "uses disallowed axioms"
+    | .notFound => "declaration not found in submission"
+
 /-- The outcome of running the check on a single declaration in the submission. This contains:
 1. The contant (stored as an `Info`).
 2. The corresponding constant in the target file, if found.
@@ -180,9 +189,9 @@ def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial
   IO.println "------------------"
   let mut hasErrors := false
   for (name, ⟨_, _, failure?⟩) in checkOutcome do
-    if failure?.isSome then
+    if let some failure := failure? then
       hasErrors := true
-      IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}"
+      IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}: {failure}"
   IO.println "------------------"
   if hasErrors then
     throw <| IO.userError s!"SafeVerify check failed for {submissionFile}"
