@@ -178,13 +178,15 @@ def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial
       throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
   let checkOutcome := checkTargets submissionInfo targetInfo
   IO.println "------------------"
+  let mut hasErrors := false
   for (name, ⟨_, _, failure?⟩) in checkOutcome do
     if failure?.isSome then
-    IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}"
+      hasErrors := true
+      IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}"
   IO.println "------------------"
+  if hasErrors then
+    throw <| IO.userError s!"SafeVerify check failed for {submissionFile}"
   IO.println s!"Finished."
-  -- TODO: change this
-  return
 
 open Cli
 
