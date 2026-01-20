@@ -76,6 +76,52 @@ def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
     && tval₁.isUnsafe == tval₂.isUnsafe
     && tval₁.value == tval₂.value
 
+/-
+Check if two constructors are the same
+-/
+def equivCtor (ctarget cnew : ConstantInfo) : Bool := Id.run do
+  let .ctorInfo tval₁ := ctarget | false
+  let .ctorInfo tval₂ := cnew | false
+
+  return tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.induct == tval₂.induct
+    && tval₁.cidx == tval₂.cidx
+    && tval₁.numParams == tval₂.numParams
+    && tval₁.numFields == tval₂.numFields
+    && tval₁.isUnsafe == tval₂.isUnsafe
+
+/-
+Check if two inductive types are the same.
+Takes a lookup function to retrieve constructor ConstantInfo by name.
+-/
+def equivInduct (ctarget cnew : ConstantInfo)
+    (lookupTarget lookupNew : Name → Option ConstantInfo) : Bool := Id.run do
+  let .inductInfo tval₁ := ctarget | false
+  let .inductInfo tval₂ := cnew | false
+
+  -- Check basic fields
+  unless tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.numParams == tval₂.numParams
+    && tval₁.numIndices == tval₂.numIndices
+    && tval₁.all == tval₂.all
+    && tval₁.ctors == tval₂.ctors
+    && tval₁.isRec == tval₂.isRec
+    && tval₁.isReflexive == tval₂.isReflexive
+    && tval₁.isUnsafe == tval₂.isUnsafe
+  do return false
+
+  -- Check each constructor using equivCtor
+  for ctorName in tval₁.ctors do
+    let some ctor₁ := lookupTarget ctorName | return false
+    let some ctor₂ := lookupNew ctorName | return false
+    unless equivCtor ctor₁ ctor₂ do return false
+
+  return true
+
 open Std
 
 /-- Takes the environment obtained after replaying all the constant in a file and outputs
@@ -85,7 +131,7 @@ def processFileDeclarations
   -- let ctx : Core.Context := {fileName:="", fileMap:= default}
   let mut out : HashMap Name Info := {}
   for (n, ci) in env.constants.map₂  do
-    if ci.kind ∈ ["theorem", "def", "opaque"] then
+    if ci.kind ∈ ["theorem", "def", "opaque", "inductive", "constructor"] then
       -- IO.println "---"
       -- IO.println ci.kind
       -- IO.println n
@@ -108,6 +154,10 @@ inductive CheckFailure
   | defnCheck
   /-- Used when the declaration is opaque but has a different type or value to the target. -/
   | opaqueCheck
+  /-- Used when the declaration is an inductive but doesn't match the target. -/
+  | inductCheck
+  /-- Used when the declaration is a constructor but doesn't match the target. -/
+  | ctorCheck
   /-- Used when the value of a declaration uses a forbiden axiom. -/
   | axioms
   /-- Used when the corresponding target declaration wasn't found.-/
@@ -119,6 +169,8 @@ instance : ToString CheckFailure where
     | .thmType => "theorem type mismatch"
     | .defnCheck => "definition type or value mismatch"
     | .opaqueCheck => "opaque type or value mismatch"
+    | .inductCheck => "inductive type mismatch"
+    | .ctorCheck => "constructor mismatch"
     | .axioms => "uses disallowed axioms"
     | .notFound => "declaration not found in submission"
 
@@ -135,6 +187,9 @@ deriving Inhabited
 /-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
 value if they are definitions). -/
 def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVerifyOutcome) :=
+  -- Create lookup functions for equivInduct
+  let lookupTarget := fun n => targets.get? n |>.map (·.constInfo)
+  let lookupNew := fun n => constants.get? n |>.map (·.constInfo)
   targets.map fun _ info ↦ Id.run do
     let ⟨n, ci, axs⟩ := info
     if let some info' := constants.get? n then
@@ -147,6 +202,10 @@ def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVer
         return {submissionConstant := info, targetConstant := ci', failureMode := some .defnCheck}
       if ci'.kind == "opaque" && !equivOpaq ci ci' then
         return {submissionConstant := info, targetConstant := ci', failureMode := some .opaqueCheck}
+      if ci'.kind == "inductive" && !equivInduct ci ci' lookupTarget lookupNew then
+        return {submissionConstant := info, targetConstant := ci', failureMode := some .inductCheck}
+      if ci'.kind == "constructor" && !equivCtor ci ci' then
+        return {submissionConstant := info, targetConstant := ci', failureMode := some .ctorCheck}
       if !checkAxioms info' then
         return {submissionConstant := info, targetConstant := ci', failureMode := some .axioms}
       return {submissionConstant := info, targetConstant := ci', failureMode := none}
