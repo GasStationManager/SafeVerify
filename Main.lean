@@ -136,7 +136,7 @@ deriving Inhabited
 
 /-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
 value if they are definitions). -/
-def checkTargets (submissionInfos targetInfos : HashMap Name Info) : (HashMap Name SafeVerifyOutcome) :=
+def checkTargets (targetInfos submissionInfos : HashMap Name Info) : (HashMap Name SafeVerifyOutcome) :=
   targetInfos.map fun _ target_info ↦ Id.run do
     let ⟨n, target_constInfo, axs⟩ := target_info
     if let some submission_info := submissionInfos.get? n then
@@ -187,7 +187,7 @@ def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial
   for (n, info) in submissionInfo do
     if !checkAxioms info then
       throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
-  let checkOutcome := checkTargets submissionInfo targetInfo
+  let checkOutcome := checkTargets targetInfo submissionInfo
   IO.println "------------------"
   let mut hasErrors := false
   for (name, ⟨_, _, failure?⟩) in checkOutcome do
