@@ -129,7 +129,7 @@ The outcome of running the check on a single declaration in the target. This con
 3. The failure mode that occured, if the check failed.
 -/
 structure SafeVerifyOutcome where
-  targetConstant : Info
+  targetInfo : Info
   submissionConstant : Option ConstantInfo
   failureMode : Option CheckFailure
 deriving Inhabited
@@ -142,18 +142,18 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : (HashMap Na
     if let some submission_info := submissionInfos.get? n then
       let submission_constInfo := submission_info.constInfo
       if target_constInfo.kind ≠ submission_constInfo.kind then
-        return {targetConstant := target_info, submissionConstant := submission_constInfo, failureMode := some <| .kind target_constInfo.kind submission_constInfo.kind}
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some <| .kind target_constInfo.kind submission_constInfo.kind}
       if submission_constInfo.kind == "theorem" && !equivThm target_constInfo submission_constInfo then
-        return {targetConstant := target_info, submissionConstant := submission_constInfo, failureMode := some .thmType}
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .thmType}
       if submission_constInfo.kind == "def" && !equivDefn target_constInfo submission_constInfo (`sorryAx ∉ axs)  then
-        return {targetConstant := target_info, submissionConstant := submission_constInfo, failureMode := some .defnCheck}
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .defnCheck}
       if submission_constInfo.kind == "opaque" && !equivOpaq target_constInfo submission_constInfo then
-        return {targetConstant := target_info, submissionConstant := submission_constInfo, failureMode := some .opaqueCheck}
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .opaqueCheck}
       if !checkAxioms submission_info then
-        return {targetConstant := target_info, submissionConstant := submission_constInfo, failureMode := some .axioms}
-      return {targetConstant := target_info, submissionConstant := submission_constInfo, failureMode := none}
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .axioms}
+      return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := none}
     else
-      return {targetConstant := target_info, submissionConstant := none, failureMode := some .notFound}
+      return {targetInfo := target_info, submissionConstant := none, failureMode := some .notFound}
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
