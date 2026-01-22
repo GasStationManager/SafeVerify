@@ -94,7 +94,7 @@ def processFileDeclarations
         -- IO.println s!":= {ci.value!}"
       let (_, s) := (CollectAxioms.collect n).run env |>.run {}
       -- IO.println s.axioms
-      out := out.insert n ⟨n, ci, s.axioms⟩ -- why store the name twice?
+      out := out.insert n ⟨n, ci, s.axioms⟩
   return out
 
 /-- The failure modes that can occur when running the safeverify check on a single declaration. -/
