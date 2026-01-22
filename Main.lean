@@ -124,7 +124,7 @@ instance : ToString CheckFailure where
 
 /--
 The outcome of running the check on a single declaration in the target. This contains:
-1. The contant (stored as an `Info`).
+1. The constant in the target file (stored as an `Info`).
 2. The corresponding constant in the submission file, if found.
 3. The failure mode that occured, if the check failed.
 -/
