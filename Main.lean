@@ -122,36 +122,38 @@ instance : ToString CheckFailure where
     | .axioms => "uses disallowed axioms"
     | .notFound => "declaration not found in submission"
 
-/-- The outcome of running the check on a single declaration in the submission. This contains:
-1. The contant (stored as an `Info`).
-2. The corresponding constant in the target file, if found.
-3. The failure mode that occured, if the check failed. -/
+/--
+The outcome of running the check on a single declaration in the target. This contains:
+1. The constant in the target file (stored as an `Info`).
+2. The corresponding constant in the submission file, if found.
+3. The failure mode that occured, if the check failed.
+-/
 structure SafeVerifyOutcome where
-  submissionConstant : Info
-  targetConstant : Option ConstantInfo
+  targetInfo : Info
+  submissionConstant : Option ConstantInfo
   failureMode : Option CheckFailure
 deriving Inhabited
 
 /-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
 value if they are definitions). -/
-def checkTargets (constants targets : HashMap Name Info) : (HashMap Name SafeVerifyOutcome) :=
-  targets.map fun _ info ↦ Id.run do
-    let ⟨n, ci, axs⟩ := info
-    if let some info' := constants.get? n then
-      let ci' := info'.constInfo
-      if ci.kind ≠ ci'.kind then
-        return {submissionConstant := info, targetConstant := ci', failureMode := some <| .kind ci.kind ci'.kind}
-      if ci'.kind == "theorem" && !equivThm ci ci' then
-        return {submissionConstant := info, targetConstant := ci', failureMode := some .thmType}
-      if ci'.kind == "def" && !equivDefn ci ci' (`sorryAx ∉ axs)  then
-        return {submissionConstant := info, targetConstant := ci', failureMode := some .defnCheck}
-      if ci'.kind == "opaque" && !equivOpaq ci ci' then
-        return {submissionConstant := info, targetConstant := ci', failureMode := some .opaqueCheck}
-      if !checkAxioms info' then
-        return {submissionConstant := info, targetConstant := ci', failureMode := some .axioms}
-      return {submissionConstant := info, targetConstant := ci', failureMode := none}
+def checkTargets (targetInfos submissionInfos : HashMap Name Info) : (HashMap Name SafeVerifyOutcome) :=
+  targetInfos.map fun _ target_info ↦ Id.run do
+    let ⟨n, target_constInfo, axs⟩ := target_info
+    if let some submission_info := submissionInfos.get? n then
+      let submission_constInfo := submission_info.constInfo
+      if target_constInfo.kind ≠ submission_constInfo.kind then
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some <| .kind target_constInfo.kind submission_constInfo.kind}
+      if submission_constInfo.kind == "theorem" && !equivThm target_constInfo submission_constInfo then
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .thmType}
+      if submission_constInfo.kind == "def" && !equivDefn target_constInfo submission_constInfo (`sorryAx ∉ axs)  then
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .defnCheck}
+      if submission_constInfo.kind == "opaque" && !equivOpaq target_constInfo submission_constInfo then
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .opaqueCheck}
+      if !checkAxioms submission_info then
+        return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := some .axioms}
+      return {targetInfo := target_info, submissionConstant := submission_constInfo, failureMode := none}
     else
-      return {submissionConstant := info, targetConstant := none, failureMode := some .notFound}
+      return {targetInfo := target_info, submissionConstant := none, failureMode := some .notFound}
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
@@ -185,7 +187,7 @@ def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial
   for (n, info) in submissionInfo do
     if !checkAxioms info then
       throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
-  let checkOutcome := checkTargets submissionInfo targetInfo
+  let checkOutcome := checkTargets targetInfo submissionInfo
   IO.println "------------------"
   let mut hasErrors := false
   for (name, ⟨_, _, failure?⟩) in checkOutcome do
