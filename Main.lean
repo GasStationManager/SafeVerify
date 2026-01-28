@@ -9,6 +9,12 @@ import Cli
 
 open Lean Meta Core
 
+instance : ToString DefinitionSafety where
+  toString
+    | .safe => "safe"
+    | .unsafe => "unsafe"
+    | .partial => "partial"
+
 def Lean.ConstantInfo.kind : ConstantInfo → String
   | .axiomInfo  _ => "axiom"
   | .defnInfo   _ => "def"
