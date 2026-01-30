@@ -12,3 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
+        with:
+          build-args: 'safe_verify'  # Only build the main executable, not test files
+      
+      - name: Run SafeVerify Tests
+        run: |
+          chmod +x scripts/run_tests.sh
+          ./scripts/run_tests.sh
