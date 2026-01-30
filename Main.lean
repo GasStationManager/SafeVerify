@@ -9,6 +9,12 @@ import Cli
 
 open Lean Meta Core
 
+instance : ToString DefinitionSafety where
+  toString
+    | .safe => "safe"
+    | .unsafe => "unsafe"
+    | .partial => "partial"
+
 def Lean.ConstantInfo.kind : ConstantInfo → String
   | .axiomInfo  _ => "axiom"
   | .defnInfo   _ => "def"
@@ -177,9 +183,49 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
 
 -- TODO: implement option to store ouput as a JSON file (with outcome for each result).
 
+/-- Print verbose information about a type mismatch between two constants. -/
+def printVerboseTypeMismatch (targetConst submissionConst : ConstantInfo) : IO Unit := do
+  IO.eprintln s!"  Expected type: {targetConst.type}"
+  IO.eprintln s!"  Got type:      {submissionConst.type}"
+  if targetConst.levelParams != submissionConst.levelParams then
+    IO.eprintln s!"  Expected level params: {targetConst.levelParams}"
+    IO.eprintln s!"  Got level params:      {submissionConst.levelParams}"
+
+/-- Print verbose information about a definition mismatch. -/
+def printVerboseDefnMismatch (targetConst submissionConst : ConstantInfo) : IO Unit := do
+  if targetConst.type != submissionConst.type then
+    IO.eprintln s!"  Type mismatch:"
+    IO.eprintln s!"    Expected: {targetConst.type}"
+    IO.eprintln s!"    Got:      {submissionConst.type}"
+  if targetConst.levelParams != submissionConst.levelParams then
+    IO.eprintln s!"  Level params mismatch:"
+    IO.eprintln s!"    Expected: {targetConst.levelParams}"
+    IO.eprintln s!"    Got:      {submissionConst.levelParams}"
+  if let (.defnInfo tval₁, .defnInfo tval₂) := (targetConst, submissionConst) then
+    if tval₁.safety != tval₂.safety then
+      IO.eprintln s!"  Safety mismatch: expected {tval₁.safety}, got {tval₂.safety}"
+    if tval₁.value != tval₂.value then
+      IO.eprintln s!"  Value mismatch (values differ)"
+
+/-- Print verbose information about an opaque mismatch. -/
+def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO Unit := do
+  if targetConst.type != submissionConst.type then
+    IO.eprintln s!"  Type mismatch:"
+    IO.eprintln s!"    Expected: {targetConst.type}"
+    IO.eprintln s!"    Got:      {submissionConst.type}"
+  if targetConst.levelParams != submissionConst.levelParams then
+    IO.eprintln s!"  Level params mismatch:"
+    IO.eprintln s!"    Expected: {targetConst.levelParams}"
+    IO.eprintln s!"    Got:      {submissionConst.levelParams}"
+  if let (.opaqueInfo tval₁, .opaqueInfo tval₂) := (targetConst, submissionConst) then
+    if tval₁.isUnsafe != tval₂.isUnsafe then
+      IO.eprintln s!"  Safety mismatch: expected isUnsafe={tval₁.isUnsafe}, got isUnsafe={tval₂.isUnsafe}"
+    if tval₁.value != tval₂.value then
+      IO.eprintln s!"  Value mismatch (values differ)"
+
 /-- Run the main SafeVerify check on a pair of file (the targetFile containing statements and the
 submission file containing proofs). -/
-def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial : Bool) : IO Unit := do
+def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial : Bool) (verbose : Bool := false) : IO Unit := do
   IO.println "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
@@ -190,10 +236,25 @@ def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial
   let checkOutcome := checkTargets targetInfo submissionInfo
   IO.println "------------------"
   let mut hasErrors := false
-  for (name, ⟨_, _, failure?⟩) in checkOutcome do
-    if let some failure := failure? then
+  for (name, outcome) in checkOutcome do
+    if let some failure := outcome.failureMode then
       hasErrors := true
       IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}: {failure}"
+      if verbose then
+        match failure with
+        | .thmType =>
+          if let some submissionConst := outcome.submissionConstant then
+            printVerboseTypeMismatch outcome.targetInfo.constInfo submissionConst
+        | .defnCheck =>
+          if let some submissionConst := outcome.submissionConstant then
+            printVerboseDefnMismatch outcome.targetInfo.constInfo submissionConst
+        | .opaqueCheck =>
+          if let some submissionConst := outcome.submissionConstant then
+            printVerboseOpaqueMismatch outcome.targetInfo.constInfo submissionConst
+        | .axioms =>
+          if let some submissionInfo := submissionInfo.get? name then
+            IO.eprintln s!"  Disallowed axioms used: {submissionInfo.axioms.filter (· ∉ AllowedAxioms)}"
+        | _ => pure ()
   IO.println "------------------"
   if hasErrors then
     throw <| IO.userError s!"SafeVerify check failed for {submissionFile}"
@@ -217,10 +278,11 @@ def runMain (p : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
   IO.println s!"Currently running on Lean v{Lean.versionString}"
   let disallowPartial := p.hasFlag "disallow-partial"
+  let verbose := p.hasFlag "verbose"
   let targetFile  := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile  := p.positionalArg! "submission" |>.as! System.FilePath
   IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
-  runSafeVerify targetFile submissionFile disallowPartial
+  runSafeVerify targetFile submissionFile disallowPartial verbose
   return 0
 
 /-- The main CLI interface for `SafeVerify`. This will be expanded as we add more
@@ -231,6 +293,7 @@ def mainCmd : Cmd := `[Cli|
   -- TODO: add flags to control which axioms and allowed and so on.
   FLAGS:
     "disallow-partial"; "Disallow partial definitions"
+    v, "verbose"; "Enable verbose error messages showing detailed type information"
 
   ARGS:
     target : System.FilePath; "The target file"
