@@ -20,9 +20,11 @@ lean_lib SafeVerify where
   leanOptions := safeVerifyLeanOptions
   globs := #[.submodules `SafeVerify, `Main]
 
-@[test_driver]
-lean_lib SafeVerifyTest where
-  globs := #[.submodules `SafeVerifyTest]
+-- SafeVerifyTest contains intentionally broken lean files for testing
+-- They should not be compiled with lake build, but tested via scripts/run_tests.sh
+-- @[test_driver]
+-- lean_lib SafeVerifyTest where
+--   globs := #[.submodules `SafeVerifyTest]
 
 lean_exe safe_verify where
   root := `Main
