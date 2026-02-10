@@ -18,7 +18,7 @@ require Cli from git
 @[default_target]
 lean_lib SafeVerify where
   leanOptions := safeVerifyLeanOptions
-  globs := #[.submodules `SafeVerify, `Main]
+  -- globs := #[.submodules `SafeVerify]
 
 -- SafeVerifyTest contains intentionally broken lean files for testing
 -- They should not be compiled with lake build, but tested via scripts/run_tests.sh

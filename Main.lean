@@ -4,83 +4,18 @@ and
 https://github.com/kim-em/lean-training-data/blob/master/scripts/declaration_types.lean
 -/
 
+import SafeVerify
 import Lean
 import Cli
 
-open Lean Meta Core
-
-instance : ToString DefinitionSafety where
-  toString
-    | .safe => "safe"
-    | .unsafe => "unsafe"
-    | .partial => "partial"
-
-def Lean.ConstantInfo.kind : ConstantInfo → String
-  | .axiomInfo  _ => "axiom"
-  | .defnInfo   _ => "def"
-  | .thmInfo    _ => "theorem"
-  | .opaqueInfo _ => "opaque"
-  | .quotInfo   _ => "quot" -- Not sure what this is!
-  | .inductInfo _ => "inductive"
-  | .ctorInfo   _ => "constructor"
-  | .recInfo    _ => "recursor"
+open Lean Meta Core SafeVerify
 
 def AllowedAxioms := [`propext, `Quot.sound, `Classical.choice]
-
-structure Info where
-  name : Name
-  constInfo : ConstantInfo
-  axioms : Array Name
-deriving Inhabited
-
-instance : ToString Info where
-  toString info := s!"Name: {info.name}. Axioms: {info.axioms}."
 
 def checkAxioms (info : Info) : Bool := Id.run do
   for a in info.axioms do
     if a ∉ AllowedAxioms then return false
   return true
-
-/-
-From Lean.Environment
-Check if two theorems have the same type and name
--/
-def equivThm (cinfo₁ cinfo₂ : ConstantInfo) : Bool := Id.run do
-  let .thmInfo tval₁ := cinfo₁ | false
-  let .thmInfo tval₂ := cinfo₂ | false
-  return tval₁.name == tval₂.name
-    && tval₁.type == tval₂.type
-    && tval₁.levelParams == tval₂.levelParams
-    && tval₁.all == tval₂.all
-
-/-
-Check if two definitions have the same type and name.
-If checkVal is true, then also check their values are the same
--/
-def equivDefn (ctarget cnew : ConstantInfo) (checkVal:Bool:=false) : Bool := Id.run do
-  let .defnInfo tval₁ := ctarget | false
-  let .defnInfo tval₂ := cnew | false
-
-  return tval₁.name == tval₂.name
-    && tval₁.type == tval₂.type
-    && tval₁.levelParams == tval₂.levelParams
-    && tval₁.all == tval₂.all
-    && tval₁.safety == tval₂.safety
-    && (if checkVal then tval₁.value == tval₂.value else true)
-
-/-
-Check if two opaque constants are the same
--/
-def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
-  let .opaqueInfo tval₁ := ctarget | false
-  let .opaqueInfo tval₂ := cnew | false
-
-  return tval₁.name == tval₂.name
-    && tval₁.type == tval₂.type
-    && tval₁.levelParams == tval₂.levelParams
-    && tval₁.all == tval₂.all
-    && tval₁.isUnsafe == tval₂.isUnsafe
-    && tval₁.value == tval₂.value
 
 open Std
 
@@ -88,57 +23,12 @@ open Std
 a hashmap storing the infos corresponding to all the theorems and definitions in the file. -/
 def processFileDeclarations
     (env : Environment) : IO <| HashMap Name Info := do
-  -- let ctx : Core.Context := {fileName:="", fileMap:= default}
   let mut out : HashMap Name Info := {}
   for (n, ci) in env.constants.map₂  do
     if ci.kind ∈ ["theorem", "def", "opaque"] then
-      -- IO.println "---"
-      -- IO.println ci.kind
-      -- IO.println n
-      -- IO.println <| ← Prod.fst <$> (CoreM.toIO (MetaM.run' do ppExpr ci.type) ctx {env:= env})
-      -- if ci.kind == "def" then
-        -- IO.println s!":= {ci.value!}"
       let (_, s) := (CollectAxioms.collect n).run env |>.run {}
-      -- IO.println s.axioms
       out := out.insert n ⟨n, ci, s.axioms⟩
   return out
-
-/-- The failure modes that can occur when running the safeverify check on a single declaration. -/
-inductive CheckFailure
-  /-- Used when the check failed because the declaration submitted has the wrong kind, e.g. is a theorem
-  instead of a def. -/
-  | kind (kind1 kind2 : String)
-  /-- Used when the declaration is a theorem but has a different type to the target theorem. -/
-  | thmType
-  /-- Used when the declaration is a definition but has a different type or value to the target. -/
-  | defnCheck
-  /-- Used when the declaration is opaque but has a different type or value to the target. -/
-  | opaqueCheck
-  /-- Used when the value of a declaration uses a forbiden axiom. -/
-  | axioms
-  /-- Used when the corresponding target declaration wasn't found.-/
-  | notFound
-
-instance : ToString CheckFailure where
-  toString
-    | .kind k1 k2 => s!"kind mismatch (expected {k1}, got {k2})"
-    | .thmType => "theorem type mismatch"
-    | .defnCheck => "definition type or value mismatch"
-    | .opaqueCheck => "opaque type or value mismatch"
-    | .axioms => "uses disallowed axioms"
-    | .notFound => "declaration not found in submission"
-
-/--
-The outcome of running the check on a single declaration in the target. This contains:
-1. The constant in the target file (stored as an `Info`).
-2. The corresponding constant in the submission file, if found.
-3. The failure mode that occured, if the check failed.
--/
-structure SafeVerifyOutcome where
-  targetInfo : Info
-  submissionConstant : Option ConstantInfo
-  failureMode : Option CheckFailure
-deriving Inhabited
 
 /-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
 value if they are definitions). -/
@@ -163,7 +53,7 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : (HashMap Na
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
-def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name _root_.Info) := do
+def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
@@ -225,7 +115,8 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
 
 /-- Run the main SafeVerify check on a pair of file (the targetFile containing statements and the
 submission file containing proofs). -/
-def runSafeVerify (targetFile submissionFile : System.FilePath) (disallowPartial : Bool) (verbose : Bool := false) : IO Unit := do
+def runSafeVerify (targetFile submissionFile : System.FilePath)
+    (disallowPartial : Bool) (verbose : Bool := false) : IO Unit := do
   IO.println "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
