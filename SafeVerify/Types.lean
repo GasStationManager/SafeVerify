@@ -4,11 +4,23 @@ open Lean Meta
 
 namespace SafeVerify
 
+-- TODO: later it could actually be nice to support printing out the actual declaration or so
+-- (e.g. print the goal if it's a theorem, etc)
+instance : ToJson ConstantInfo where
+  toJson
+    | .defnInfo _v    => Json.mkObj [("kind", "definition")]
+    | .thmInfo _v     => Json.mkObj [("kind", "theorem")]
+    | .axiomInfo _v   => Json.mkObj [("kind", "axiom")]
+    | .opaqueInfo _v  => Json.mkObj [("kind", "opaque")]
+    | .quotInfo _v    => Json.mkObj [("kind", "quotient")]
+    | .inductInfo _v  => Json.mkObj [("kind", "inductive")]
+    | .ctorInfo _v    => Json.mkObj [("kind", "constructor")]
+    | .recInfo _v     => Json.mkObj [("kind", "recursor")]
+
 structure Info where
-  name : Name
   constInfo : ConstantInfo
   axioms : Array Name
-deriving Inhabited
+deriving Inhabited, ToJson
 
 /-- The failure modes that can occur when running the safeverify check on a single declaration. -/
 inductive CheckFailure
@@ -25,6 +37,7 @@ inductive CheckFailure
   | axioms
   /-- Used when the corresponding target declaration wasn't found.-/
   | notFound
+deriving ToJson
 
 /--
 The outcome of running the check on a single declaration in the target. This contains:
@@ -34,9 +47,8 @@ The outcome of running the check on a single declaration in the target. This con
 -/
 structure SafeVerifyOutcome where
   targetInfo : Info
-  submissionConstant : Option ConstantInfo
+  solutionInfo : Option Info
   failureMode : Option CheckFailure
-deriving Inhabited
-
+deriving Inhabited, ToJson
 
 end SafeVerify
