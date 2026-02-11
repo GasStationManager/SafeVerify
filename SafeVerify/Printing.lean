@@ -28,4 +28,4 @@ instance : ToString CheckFailure where
     | .notFound => "declaration not found in submission"
 
 instance : ToString Info where
-  toString info := s!"Name: {info.name}. Axioms: {info.axioms}."
+  toString info := s!"Name: {info.constInfo.name}. Axioms: {info.axioms}."
