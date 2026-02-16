@@ -57,12 +57,12 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Nam
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
 def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
-  IO.println s!"Replaying {filePath}"
+  IO.eprintln s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
   let (mod, _) ← readModuleData filePath
   let env ← importModules mod.imports {} 0
-  IO.println "Finished setting up the environement."
+  IO.eprintln "Finished setting up the environment."
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
     if ci.isUnsafe then
@@ -71,7 +71,7 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
       throw <| IO.userError s!"partial constant {name} detected"
     newConstants := newConstants.insert name ci
   let env ← env.replay newConstants
-  IO.println s!"Finished replay. Found {newConstants.size} declarations."
+  IO.eprintln s!"Finished replay. Found {newConstants.size} declarations."
   return processFileDeclarations env
 
 /-- Print verbose information about a type mismatch between two constants. -/
@@ -110,6 +110,8 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
     IO.eprintln s!"    Got:      {submissionConst.levelParams}"
   if let (.opaqueInfo tval₁, .opaqueInfo tval₂) := (targetConst, submissionConst) then
     if tval₁.isUnsafe != tval₂.isUnsafe then
+      -- TODO(Paul-Lez): currently this will never occur because we throw an error whenever we reach an unsafe constant - fix this?
+      -- probably we should track dissalowed opaque (and partial) constant in a CheckFailureField.
       IO.eprintln s!"  Safety mismatch: expected isUnsafe={tval₁.isUnsafe}, got isUnsafe={tval₂.isUnsafe}"
     if tval₁.value != tval₂.value then
       IO.eprintln s!"  Value mismatch (values differ)"
@@ -118,19 +120,19 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
 submission file containing proofs). -/
 def runSafeVerify (targetFile submissionFile : System.FilePath)
     (disallowPartial : Bool) (verbose : Bool := false) : IO (HashMap Name SafeVerifyOutcome) := do
-  IO.println "------------------"
+  IO.eprintln "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
-  IO.println "------------------"
+  IO.eprintln "------------------"
   let submissionInfo ← replayFile submissionFile disallowPartial
   for (n, info) in submissionInfo do
     if !checkAxioms info then
-      throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
+      IO.eprintln s!"{n} used disallowed axioms. {info.axioms}"
   let checkOutcome := checkTargets targetInfo submissionInfo
-  IO.println "------------------"
-  let mut hasErrors := false
+  IO.eprintln "------------------"
+  let mut hasFailures := false
   for (name, outcome) in checkOutcome do
     if let some failure := outcome.failureMode then
-      hasErrors := true
+      hasFailures := true
       IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}: {failure}"
       if verbose then
         match failure with
@@ -147,10 +149,13 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
           if let some submissionInfo := submissionInfo.get? name then
             IO.eprintln s!"  Disallowed axioms used: {submissionInfo.axioms.filter (· ∉ AllowedAxioms)}"
         | _ => pure ()
-  IO.println "------------------"
-  if hasErrors then
-    throw <| IO.userError s!"SafeVerify check failed for {submissionFile}"
-  IO.println s!"Finished."
+  IO.eprintln "------------------"
+  if hasFailures then
+    IO.eprintln "SafeVerify check failed."
+    if !verbose then
+      IO.eprintln s!"For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
+  else
+    IO.eprintln "SafeVerify check passed."
   return checkOutcome
 
 open Cli
@@ -169,12 +174,12 @@ Checks the second file's theorems to make sure they only use the three standard 
 -/
 def runMain (p : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
-  IO.println s!"Currently running on Lean v{Lean.versionString}"
+  IO.eprintln s!"Currently running on Lean v{Lean.versionString}"
   let disallowPartial := p.hasFlag "disallow-partial"
   let verbose := p.hasFlag "verbose"
   let targetFile := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
-  IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
+  IO.eprintln s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
   let output ← runSafeVerify targetFile submissionFile disallowPartial verbose
   let jsonOutput := ToJson.toJson output.toArray
   let some jsonPathFlag := p.flag? "save" | return 0
