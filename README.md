@@ -64,6 +64,136 @@ will build the script as an executable at `.lake/build/bin/safe_verify`. You can
 lake exe safe_verify target.olean submission.olean
 ```
 
+## Command-Line Flags
+
+SafeVerify accepts the following command-line flags:
+
+- `--disallow-partial`: Disallow partial definitions. When enabled, any partial constant will cause SafeVerify to throw an error. This is useful for preventing infinite loops that could satisfy type requirements.
+- `-v, --verbose`: Enable verbose error messages. When enabled, SafeVerify will print detailed type information for mismatches, including expected vs. actual types, level parameters, and values.
+- `-s, --save <filepath>`: Save the verification output to a JSON file at the specified path. The JSON contains detailed information about each declaration checked.
+
+**Example usage:**
+```bash
+# Run with verbose output
+lake exe safe_verify --verbose target.olean submission.olean
+
+# Run with partial definitions disallowed
+lake exe safe_verify --disallow-partial target.olean submission.olean
+
+# Run and save output to JSON
+lake exe safe_verify --save output.json target.olean submission.olean
+
+# Combine multiple flags
+lake exe safe_verify -v --disallow-partial -s output.json target.olean submission.olean
+```
+
+## Output Format
+
+When SafeVerify runs, it produces the following output:
+
+### Standard Output
+
+1. **Header information:**
+   ```
+   Currently running on Lean v<version>
+   Running SafeVerify on target file: <target.olean> and submission file: <submission.olean>.
+   ```
+
+2. **Replay progress:**
+   ```
+   ------------------
+   Replaying <target.olean>
+   Finished setting up the environment.
+   Finished replay. Found <N> declarations.
+   ------------------
+   Replaying <submission.olean>
+   Finished setting up the environment.
+   Finished replay. Found <N> declarations.
+   ------------------
+   ```
+
+3. **Verification results:**
+   - If all checks pass: `Finished.`
+   - If checks fail: Error messages are printed to stderr (see below)
+
+### Error Output
+
+When SafeVerify detects problems, it prints error messages to stderr. Each error follows this format:
+
+```
+Found a problem in <submission.olean> with declaration <name>: <failure-description>
+```
+
+When the `--verbose` flag is enabled, additional details are provided depending on the failure type:
+- **Theorem type mismatch:** Shows expected vs. actual types and level parameters
+- **Definition mismatch:** Shows type, level parameter, safety, and value differences
+- **Opaque mismatch:** Shows type, level parameter, safety (isUnsafe), and value differences
+- **Disallowed axioms:** Lists which axioms were used that are not allowed
+
+### JSON Output
+
+When using the `--save` flag, SafeVerify outputs a JSON file containing an array of verification outcomes. Each outcome has the following structure:
+
+```json
+{
+  "targetInfo": {
+    "constInfo": {"kind": "theorem"},
+    "axioms": ["propext", "Classical.choice"]
+  },
+  "solutionInfo": {
+    "constInfo": {"kind": "theorem"},
+    "axioms": ["propext", "Classical.choice"]
+  },
+  "failureMode": null
+}
+```
+
+- `targetInfo`: Information about the declaration in the target file
+- `solutionInfo`: Information about the corresponding declaration in the submission file (or `null` if not found)
+- `failureMode`: The type of failure that occurred (or `null` if the check passed)
+
+## Possible Verification Outcomes
+
+When comparing declarations between the target and submission files, SafeVerify produces one of the following outcomes:
+
+### Success
+- **No failure mode:** The declaration in the submission file matches the target declaration in all required ways (same name, kind, type, and value where applicable).
+
+### Failure Modes
+
+1. **`declaration not found in submission`**
+   - The target file contains a declaration that does not exist in the submission file.
+
+2. **`kind mismatch (expected <kind1>, got <kind2>)`**
+   - The declaration exists but has the wrong kind. For example, the target expects a `theorem` but the submission provides a `def`.
+   - Possible kinds: `axiom`, `def`, `theorem`, `opaque`, `quot`, `inductive`, `constructor`, `recursor`
+
+3. **`theorem type mismatch`**
+   - The declaration is a theorem but its type differs from the target theorem's type.
+   - With `--verbose`: Shows expected and actual types, including level parameters if they differ.
+
+4. **`definition type or value mismatch`**
+   - The declaration is a definition but either:
+     - Its type differs from the target, or
+     - Its value (body) differs from the target (only checked when the target doesn't depend on `sorry`)
+   - With `--verbose`: Shows type mismatches, level parameter mismatches, safety mismatches, and indicates if values differ.
+
+5. **`opaque type or value mismatch`**
+   - The declaration is opaque but either:
+     - Its type differs from the target, or
+     - Its value differs from the target, or
+     - Its safety properties differ
+   - With `--verbose`: Shows type mismatches, level parameter mismatches, safety (isUnsafe) mismatches, and indicates if values differ.
+
+6. **`uses disallowed axioms`**
+   - The declaration uses axioms beyond the three standard allowed axioms: `propext`, `Quot.sound`, and `Classical.choice`.
+   - With `--verbose`: Lists the specific disallowed axioms that were used.
+
+### Exit Codes
+
+- `0`: All checks passed successfully
+- Non-zero: Verification failed (an error was thrown)
+
 ## What if the proof contains `native_decide`?
 
 Currently, proofs containing `native_decide` will not pass SafeVerify, partially due to the additional dependence on the axoim `ofReduceBool`, but also the fact that a proof term is not produced, and therefore cannot be sent to the kernel. You may consider using [ReplaceNativeDecide](https://github.com/GasStationManager/ReplaceNativeDecide) to replace the uses of `native_decide` with explicit proofs, then pass the updated proof to SafeVerify so that the rest of the proof can be checked.
