@@ -5,20 +5,11 @@ https://github.com/kim-em/lean-training-data/blob/master/scripts/declaration_typ
 -/
 
 import SafeVerify
+import SafeVerify.Monads
 import Lean
 import Cli
 
--- TODO(Paul-Lez): it would be nice to do things monadically here!
-
 open Lean Meta Core SafeVerify
-
-def AllowedAxioms := [`propext, `Quot.sound, `Classical.choice]
-
-def checkAxioms (info : Info) : Bool := Id.run do
-  for a in info.axioms do
-    if a ∉ AllowedAxioms then return false
-  return true
-
 open Std
 
 /-- Takes the environment obtained after replaying all the constant in a file and outputs
@@ -31,38 +22,70 @@ def processFileDeclarations (env : Environment) : HashMap Name Info := Id.run do
       out := out.insert ci.name ⟨ci, s.axioms⟩
   return out
 
-def Info.toFailureMode (target submission : Info) : Option SafeVerifyOutcome := Id.run do
+/-- Check if an Info uses only allowed axioms -/
+def checkAxioms (info : Info) (allowedAxioms : Array Name) : Bool := Id.run do
+  for a in info.axioms do
+    if a ∉ allowedAxioms then return false
+  return true
+
+/-- Determine the failure mode for a single target/submission pair.
+`isDisproof` indicates whether the submission is a disproof (using the `.disproof` suffix
+convention). When `isDisproof` is true, the theorem type check is negated: we verify that the
+submission proves the negation of the target statement instead of the statement itself. -/
+def Info.toFailureMode (target submission : Info) (isDisproof : Bool)
+    (allowedAxioms : Array Name) (env : Environment) :
+    IO (Option SafeVerifyOutcome) := do
   if target.constInfo.kind ≠ submission.constInfo.kind then
     return some ⟨target, submission, some <| .kind target.constInfo.kind submission.constInfo.kind⟩
   -- This is a little hacky since it would be better to avoid string matching but let's deal with that later.
-  if submission.constInfo.kind == "theorem" && !equivThm target.constInfo submission.constInfo then
-    return some ⟨target, submission, some .thmType⟩
+  if submission.constInfo.kind == "theorem" then
+    if !isDisproof then
+      if !equivThm target.constInfo submission.constInfo then
+        return some ⟨target, submission, some .thmType⟩
+    else
+      let negOk : CoreM Bool := checkNegatedTheorem target.constInfo submission.constInfo
+      let negOk ← negOk.toIO' {fileName := "", fileMap := default} {env := env}
+      if !negOk then
+        return some ⟨target, submission, some .thmType⟩
   if submission.constInfo.kind == "def"
-      && !equivDefn target.constInfo submission.constInfo (`sorryAx ∉ target.axioms)  then
+      && !equivDefn target.constInfo submission.constInfo (`sorryAx ∉ target.axioms) then
     return some ⟨target, submission, some .defnCheck⟩
   if submission.constInfo.kind == "opaque" && !equivOpaq target.constInfo submission.constInfo then
     return some ⟨target, submission, some .opaqueCheck⟩
-  if !checkAxioms submission then
+  if !checkAxioms submission allowedAxioms then
     return some ⟨target, submission, some .axioms⟩
   return some ⟨target, submission, none⟩
 
-/-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
-value if they are definitions). -/
-def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Name SafeVerifyOutcome :=
-  targetInfos.map fun _ targetInfo ↦ Id.run do
-    let optionInfo := submissionInfos.get? targetInfo.constInfo.name
-    let optionOutcome := optionInfo.bind (Info.toFailureMode targetInfo)
-    optionOutcome.getD (dflt := ⟨targetInfo, none, some .notFound⟩)
+/-- Check that the declarations match (i.e. same kind, same type, and same
+value if they are definitions). Reads Settings and Decls from context, updates State with outcomes.
+When `allowDisproofs` is set in Settings, also looks for `foo.disproof` submissions as valid
+negation proofs of target theorem `foo`. -/
+def checkTargets : SafeVerifyM Unit := do
+  let settings ← getSettings
+  let decls ← getDecls
+  let outArray ← decls.targetDecls.toArray.mapM fun (name, targetInfo) ↦ do
+    let mut optionInfo := decls.submissionDecls.get? targetInfo.constInfo.name
+    let optionInfoDisproof :=
+      if settings.allowDisproofs
+        then decls.submissionDecls.get? <| targetInfo.constInfo.name.str "disproof"
+        else none
+    if optionInfoDisproof.isSome then optionInfo := optionInfoDisproof
+    let optionOutcome ← optionInfo.bindM
+      (Info.toFailureMode targetInfo · optionInfoDisproof.isSome settings.allowedAxioms decls.env)
+    return (name, optionOutcome.getD (dflt := ⟨targetInfo, none, some .notFound⟩))
+  let checkOutcome := HashMap.ofArray outArray
+  modify fun s => { s with checkOutcomes := checkOutcome }
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
-the theorems and definitions in the file. -/
-def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
-  IO.println s!"Replaying {filePath}"
+the theorems and definitions in the file, together with the resulting environment. -/
+def replayFile (filePath : System.FilePath) (disallowPartial : Bool) :
+    IO (HashMap Name Info × Environment) := do
+  IO.eprintln s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
   let (mod, _) ← readModuleData filePath
   let env ← importModules mod.imports {} 0
-  IO.println "Finished setting up the environement."
+  IO.eprintln "Finished setting up the environment."
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
     if ci.isUnsafe then
@@ -70,9 +93,22 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
     if disallowPartial && ci.isPartial then
       throw <| IO.userError s!"partial constant {name} detected"
     newConstants := newConstants.insert name ci
-  let env ← env.replay newConstants
-  IO.println s!"Finished replay. Found {newConstants.size} declarations."
-  return processFileDeclarations env
+  let env' ← env.replay newConstants
+  IO.eprintln s!"Finished replay. Found {newConstants.size} declarations."
+  return (processFileDeclarations env', env')
+
+/-- Replays the target (challenge) file and extracts declarations plus the environment.
+    Reads file path and settings from the Settings context. -/
+def replayChallenges : ReaderT SafeVerify.Settings IO (HashMap Name Info × Environment) := do
+  let settings ← read
+  replayFile settings.targetFile settings.disallowPartial
+
+/-- Replays the submission (solution) file and extracts declarations.
+    Reads file path and settings from the Settings context. -/
+def replaySolutions : ReaderT SafeVerify.Settings IO (HashMap Name Info) := do
+  let settings ← read
+  let (decls, _) ← replayFile settings.submissionFile settings.disallowPartial
+  return decls
 
 /-- Print verbose information about a type mismatch between two constants. -/
 def printVerboseTypeMismatch (targetConst submissionConst : ConstantInfo) : IO Unit := do
@@ -110,29 +146,36 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
     IO.eprintln s!"    Got:      {submissionConst.levelParams}"
   if let (.opaqueInfo tval₁, .opaqueInfo tval₂) := (targetConst, submissionConst) then
     if tval₁.isUnsafe != tval₂.isUnsafe then
+      -- TODO(Paul-Lez): currently this will never occur because we throw an error whenever we reach an unsafe constant - fix this?
+      -- probably we should track dissalowed opaque (and partial) constant in a CheckFailureField.
       IO.eprintln s!"  Safety mismatch: expected isUnsafe={tval₁.isUnsafe}, got isUnsafe={tval₂.isUnsafe}"
     if tval₁.value != tval₂.value then
       IO.eprintln s!"  Value mismatch (values differ)"
 
-/-- Run the main SafeVerify check on a pair of file (the targetFile containing statements and the
-submission file containing proofs). -/
-def runSafeVerify (targetFile submissionFile : System.FilePath)
-    (disallowPartial : Bool) (verbose : Bool := false) : IO (HashMap Name SafeVerifyOutcome) := do
-  IO.println "------------------"
-  let targetInfo ← replayFile targetFile disallowPartial
-  IO.println "------------------"
-  let submissionInfo ← replayFile submissionFile disallowPartial
-  for (n, info) in submissionInfo do
-    if !checkAxioms info then
-      throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
-  let checkOutcome := checkTargets targetInfo submissionInfo
-  IO.println "------------------"
-  let mut hasErrors := false
+/-- Run the main SafeVerify check. This uses the three-layer monadic design with Settings, Decls, and State. -/
+def runSafeVerify : SafeVerifyM Unit := do
+  let settings ← getSettings
+  let decls ← getDecls
+
+  IO.eprintln "------------------"
+  -- Check for disallowed axioms
+  for (n, info) in decls.submissionDecls do
+    if !checkAxioms info settings.allowedAxioms then
+      IO.eprintln s!"{n} used disallowed axioms. {info.axioms}"
+
+  -- Run the checks and store outcomes in state
+  checkTargets
+  IO.eprintln "------------------"
+
+  -- Print results
+  let state ← get
+  let checkOutcome := state.checkOutcomes
+  let mut hasFailures := false
   for (name, outcome) in checkOutcome do
     if let some failure := outcome.failureMode then
-      hasErrors := true
-      IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}: {failure}"
-      if verbose then
+      hasFailures := true
+      IO.eprintln s!"Found a problem in {settings.submissionFile} with declaration {name}: {failure}"
+      if settings.verbose then
         match failure with
         | .thmType =>
           if let some submissionConst := outcome.solutionInfo then
@@ -144,20 +187,32 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
           if let some submissionConst := outcome.solutionInfo then
             printVerboseOpaqueMismatch outcome.targetInfo.constInfo submissionConst.constInfo
         | .axioms =>
-          if let some submissionInfo := submissionInfo.get? name then
-            IO.eprintln s!"  Disallowed axioms used: {submissionInfo.axioms.filter (· ∉ AllowedAxioms)}"
+          if let some info := decls.submissionDecls.get? name then
+            IO.eprintln s!"  Disallowed axioms used: {info.axioms.filter (· ∉ settings.allowedAxioms)}"
         | _ => pure ()
-  IO.println "------------------"
-  if hasErrors then
-    throw <| IO.userError s!"SafeVerify check failed for {submissionFile}"
-  IO.println s!"Finished."
-  return checkOutcome
+  IO.eprintln "------------------"
+  if hasFailures then
+    IO.eprintln "SafeVerify check failed."
+    if !settings.verbose then
+      IO.eprintln s!"For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
+  else
+    IO.eprintln "SafeVerify check passed."
 
 open Cli
 
 instance : ParseableType System.FilePath where
   name := "System.FilePath"
   parse? str := some { toString := str }
+
+/-- Convert parsed CLI arguments to SafeVerify Settings -/
+def settingsFromParsed (p : Parsed) : SafeVerify.Settings where
+  targetFile := p.positionalArg! "target" |>.as! System.FilePath
+  submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
+  disallowPartial := p.hasFlag "disallow-partial"
+  verbose := p.hasFlag "verbose"
+  allowedAxioms := #[`propext, `Quot.sound, `Classical.choice]
+  jsonOutputPath := p.flag? "save" |>.map (·.as! System.FilePath)
+  allowDisproofs := p.hasFlag "disproofs"
 
 /--
 Takes two olean files, and checks whether the second file
@@ -169,17 +224,32 @@ Checks the second file's theorems to make sure they only use the three standard 
 -/
 def runMain (p : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
-  IO.println s!"Currently running on Lean v{Lean.versionString}"
-  let disallowPartial := p.hasFlag "disallow-partial"
-  let verbose := p.hasFlag "verbose"
-  let targetFile := p.positionalArg! "target" |>.as! System.FilePath
-  let submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
-  IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
-  let output ← runSafeVerify targetFile submissionFile disallowPartial verbose
-  let jsonOutput := ToJson.toJson output.toArray
-  let some jsonPathFlag := p.flag? "save" | return 0
-  let jsonPath := jsonPathFlag.as! System.FilePath
-  IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
+  IO.eprintln s!"Currently running on Lean v{Lean.versionString}"
+
+  -- Create settings from CLI arguments
+  let settings := settingsFromParsed p
+  IO.eprintln s!"Running SafeVerify on target file: {settings.targetFile} and submission file: {settings.submissionFile}."
+
+  -- Replay files to get declarations (runs in ReaderT Settings IO)
+  IO.eprintln "------------------"
+  let (targetDecls, env) ← replayChallenges.run settings
+  IO.eprintln "------------------"
+  let submissionDecls ← replaySolutions.run settings
+
+  -- Create the Decls context (env from target file, used for disproof checking)
+  let decls : SafeVerify.Decls := {
+    targetDecls := targetDecls,
+    submissionDecls := submissionDecls,
+    env := env
+  }
+
+  -- Run the main SafeVerify check (runs in ReaderT Settings (ReaderT Decls (StateT State IO)))
+  let (_, finalState) ← (runSafeVerify.run settings |>.run decls |>.run {})
+
+  -- Save JSON output if requested
+  if let some jsonPath := settings.jsonOutputPath then
+    let jsonOutput := ToJson.toJson finalState.checkOutcomes.toArray
+    IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
   return 0
 
 /-- The main CLI interface for `SafeVerify`. This will be expanded as we add more
@@ -192,6 +262,7 @@ def mainCmd : Cmd := `[Cli|
     "disallow-partial"; "Disallow partial definitions"
     v, "verbose"; "Enable verbose error messages showing detailed type information"
     s, "save" : System.FilePath; "Save output to a JSON file"
+    d, "disproofs"; "Allow disproof submissions (submission named foo.disproof proves foo)"
 
   ARGS:
     target : System.FilePath; "The target file"
