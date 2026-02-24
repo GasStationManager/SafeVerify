@@ -1,4 +1,6 @@
 import SafeVerify.Types
+import Mathlib.Tactic.Push
+import Lean
 
 open Lean SafeVerify
 
@@ -42,3 +44,25 @@ def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
     && tval₁.all == tval₂.all
     && tval₁.isUnsafe == tval₂.isUnsafe
     && tval₁.value == tval₂.value
+
+open Elab Meta Term Tactic
+
+def checkNegatedTheorem {m} [Monad m] [MonadLiftT CoreM m]
+    (ctarget cnew : ConstantInfo) : m Bool :=
+  -- We run in MetaM but don't really need any context
+  Lean.Meta.MetaM.run' do
+  unless ctarget.levelParams == cnew.levelParams do return false
+  let targetType := ctarget.type
+  let negatedType ← Meta.mkAppM ``Not #[targetType]
+  let eqNeg ← Meta.mkAppM ``Eq #[negatedType, cnew.type]
+  let pfTacs ← `(term| by push_neg; rfl)
+  try
+    let runTacs : TermElabM Expr := elabTermAndSynthesize pfTacs eqNeg
+    let (goalMVar, _) ← runTacs.run
+    let .ok proofType := Lean.Kernel.check (← getEnv) (← getLCtx) goalMVar | return false
+    IO.eprintln "Checked disproof."
+    match Lean.Kernel.isDefEq (← getEnv) (← getLCtx) proofType eqNeg with
+    | .error _ => return false
+    | .ok bool => return bool
+  catch _ =>
+    return false
