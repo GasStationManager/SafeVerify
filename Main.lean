@@ -119,7 +119,8 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
 /-- Run the main SafeVerify check on a pair of file (the targetFile containing statements and the
 submission file containing proofs). -/
 def runSafeVerify (targetFile submissionFile : System.FilePath)
-    (disallowPartial : Bool) (verbose : Bool := false) : IO (HashMap Name SafeVerifyOutcome) := do
+    (disallowPartial : Bool) (verbose : Bool := false) :
+    IO <| (HashMap Name SafeVerifyOutcome) × Bool := do
   IO.eprintln "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
   IO.eprintln "------------------"
@@ -156,7 +157,7 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
       IO.eprintln s!"For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
   else
     IO.eprintln "SafeVerify check passed."
-  return checkOutcome
+  return (checkOutcome, hasFailures)
 
 open Cli
 
@@ -180,11 +181,17 @@ def runMain (p : Parsed) : IO UInt32 := do
   let targetFile := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
   IO.eprintln s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
-  let output ← runSafeVerify targetFile submissionFile disallowPartial verbose
+  let (output, hasFailures) ← runSafeVerify targetFile submissionFile disallowPartial verbose
   let jsonOutput := ToJson.toJson output.toArray
   let some jsonPathFlag := p.flag? "save" | return 0
   let jsonPath := jsonPathFlag.as! System.FilePath
   IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
+  if hasFailures then
+    let nonVerboseMsg :=
+      "For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
+    IO s!"SafeVerify check failed.{if !verbose then nonVerboseMsg else ""}"
+  else
+    IO.eprintln "SafeVerify check passed."
   return 0
 
 /-- The main CLI interface for `SafeVerify`. This will be expanded as we add more
