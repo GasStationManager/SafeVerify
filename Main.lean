@@ -121,6 +121,7 @@ submission file containing proofs). -/
 def runSafeVerify (targetFile submissionFile : System.FilePath)
     (disallowPartial : Bool) (verbose : Bool := false) :
     IO <| (HashMap Name SafeVerifyOutcome) × Bool := do
+  let mut hasFailures := false
   IO.eprintln "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
   IO.eprintln "------------------"
@@ -128,9 +129,9 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
   for (n, info) in submissionInfo do
     if !checkAxioms info then
       IO.eprintln s!"{n} used disallowed axioms. {info.axioms}"
+      hasFailures := true
   let checkOutcome := checkTargets targetInfo submissionInfo
   IO.eprintln "------------------"
-  let mut hasFailures := false
   for (name, outcome) in checkOutcome do
     if let some failure := outcome.failureMode then
       hasFailures := true
@@ -151,12 +152,6 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
             IO.eprintln s!"  Disallowed axioms used: {submissionInfo.axioms.filter (· ∉ AllowedAxioms)}"
         | _ => pure ()
   IO.eprintln "------------------"
-  if hasFailures then
-    IO.eprintln "SafeVerify check failed."
-    if !verbose then
-      IO.eprintln s!"For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
-  else
-    IO.eprintln "SafeVerify check passed."
   return (checkOutcome, hasFailures)
 
 open Cli
@@ -189,7 +184,7 @@ def runMain (p : Parsed) : IO UInt32 := do
   if hasFailures then
     let nonVerboseMsg :=
       "For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
-    IO s!"SafeVerify check failed.{if !verbose then nonVerboseMsg else ""}"
+    throw <| IO.userError s!"SafeVerify check failed.{if !verbose then nonVerboseMsg else ""}"
   else
     IO.eprintln "SafeVerify check passed."
   return 0
