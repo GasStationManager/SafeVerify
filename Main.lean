@@ -207,16 +207,17 @@ def runMain (p : Parsed) : IO UInt32 := do
   let decls : SafeVerify.Decls := { targetDecls := targetDecls, submissionDecls := submissionDecls }
 
   -- Run the main SafeVerify check (runs in ReaderT Settings (ReaderT Decls (StateT State IO)))
-  let (_, finalState) ← (runSafeVerify.run decls |>.run settings |>.run {})
+  let (_, finalState) ← (runSafeVerify.run settings |>.run decls |>.run {})
 
   -- Save JSON output if requested
   if let some jsonPath := settings.jsonOutputPath then
     let jsonOutput := ToJson.toJson finalState.checkOutcomes.toArray
     IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
 
-  let hasAxiomViolations := decls.submissionDecls.any fun _ info =>
-    !checkAxioms info settings.allowedAxioms
-  let hasFailures := hasAxiomViolations || finalState.checkOutcomes.any fun _ outcome =>
+  -- TODO(Paul-Lez): add flag to also ban extra axioms & co in other declarations that aren't in the target file?
+  -- let hasAxiomViolations := decls.submissionDecls.any fun _ info =>
+  --   !checkAxioms info settings.allowedAxioms
+  let hasFailures := finalState.checkOutcomes.any fun _ outcome =>
     outcome.failureMode.isSome
   if hasFailures then
     let nonVerboseMsg :=
