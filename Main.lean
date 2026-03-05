@@ -146,10 +146,8 @@ def runSafeVerify : SafeVerifyM Unit := do
   -- Print results
   let state ← get
   let checkOutcome := state.checkOutcomes
-  let mut hasFailures := false
   for (name, outcome) in checkOutcome do
     if let some failure := outcome.failureMode then
-      hasFailures := true
       IO.eprintln s!"Found a problem in {settings.submissionFile} with declaration {name}: {failure}"
       if settings.verbose then
         match failure with
@@ -167,12 +165,6 @@ def runSafeVerify : SafeVerifyM Unit := do
             IO.eprintln s!"  Disallowed axioms used: {info.axioms.filter (· ∉ settings.allowedAxioms)}"
         | _ => pure ()
   IO.eprintln "------------------"
-  if hasFailures then
-    IO.eprintln "SafeVerify check failed."
-    if !settings.verbose then
-      IO.eprintln s!"For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
-  else
-    IO.eprintln "SafeVerify check passed."
 
 open Cli
 
@@ -221,6 +213,17 @@ def runMain (p : Parsed) : IO UInt32 := do
   if let some jsonPath := settings.jsonOutputPath then
     let jsonOutput := ToJson.toJson finalState.checkOutcomes.toArray
     IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
+
+  let hasAxiomViolations := decls.submissionDecls.any fun _ info =>
+    !checkAxioms info settings.allowedAxioms
+  let hasFailures := hasAxiomViolations || finalState.checkOutcomes.any fun _ outcome =>
+    outcome.failureMode.isSome
+  if hasFailures then
+    let nonVerboseMsg :=
+      " For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
+    throw <| IO.userError s!"SafeVerify check failed.{if !settings.verbose then nonVerboseMsg else ""}"
+  else
+    IO.eprintln "SafeVerify check passed."
   return 0
 
 /-- The main CLI interface for `SafeVerify`. This will be expanded as we add more
