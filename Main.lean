@@ -178,12 +178,12 @@ def runMain (p : Parsed) : IO UInt32 := do
   IO.eprintln s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
   let (output, hasFailures) ← runSafeVerify targetFile submissionFile disallowPartial verbose
   let jsonOutput := ToJson.toJson output.toArray
-  let some jsonPathFlag := p.flag? "save" | return 0
-  let jsonPath := jsonPathFlag.as! System.FilePath
-  IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
+  if let some jsonPathFlag := p.flag? "save" then
+    let jsonPath := jsonPathFlag.as! System.FilePath
+    IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
   if hasFailures then
     let nonVerboseMsg :=
-      "For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
+      " For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
     throw <| IO.userError s!"SafeVerify check failed.{if !verbose then nonVerboseMsg else ""}"
   else
     IO.eprintln "SafeVerify check passed."
