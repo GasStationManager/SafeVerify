@@ -42,3 +42,49 @@ def equivOpaq (ctarget cnew : ConstantInfo) : Bool := Id.run do
     && tval₁.all == tval₂.all
     && tval₁.isUnsafe == tval₂.isUnsafe
     && tval₁.value == tval₂.value
+
+/-
+Check if two constructors are the same
+-/
+def equivCtor (ctarget cnew : ConstantInfo) : Bool := Id.run do
+  let .ctorInfo tval₁ := ctarget | false
+  let .ctorInfo tval₂ := cnew | false
+
+  return tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.induct == tval₂.induct
+    && tval₁.cidx == tval₂.cidx
+    && tval₁.numParams == tval₂.numParams
+    && tval₁.numFields == tval₂.numFields
+    && tval₁.isUnsafe == tval₂.isUnsafe
+
+/-
+Check if two inductive types are the same.
+Takes a lookup function to retrieve constructor ConstantInfo by name.
+-/
+def equivInduct (ctarget cnew : ConstantInfo)
+    (lookupTarget lookupNew : Name → Option ConstantInfo) : Bool := Id.run do
+  let .inductInfo tval₁ := ctarget | false
+  let .inductInfo tval₂ := cnew | false
+
+  -- Check basic fields
+  unless tval₁.name == tval₂.name
+    && tval₁.type == tval₂.type
+    && tval₁.levelParams == tval₂.levelParams
+    && tval₁.numParams == tval₂.numParams
+    && tval₁.numIndices == tval₂.numIndices
+    && tval₁.all == tval₂.all
+    && tval₁.ctors == tval₂.ctors
+    && tval₁.isRec == tval₂.isRec
+    && tval₁.isReflexive == tval₂.isReflexive
+    && tval₁.isUnsafe == tval₂.isUnsafe
+  do return false
+
+  -- Check each constructor using equivCtor
+  for ctorName in tval₁.ctors do
+    let some ctor₁ := lookupTarget ctorName | return false
+    let some ctor₂ := lookupNew ctorName | return false
+    unless equivCtor ctor₁ ctor₂ do return false
+
+  return true

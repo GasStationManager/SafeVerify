@@ -24,6 +24,8 @@ instance : ToString CheckFailure where
     | .thmType => "theorem type mismatch"
     | .defnCheck => "definition type or value mismatch"
     | .opaqueCheck => "opaque type or value mismatch"
+    | .inductCheck => "inductive type mismatch"
+    | .ctorCheck => "constructor mismatch"
     | .axioms => "uses disallowed axioms"
     | .notFound => "declaration not found in submission"
 
