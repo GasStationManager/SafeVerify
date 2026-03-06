@@ -71,6 +71,16 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Nam
     let optionOutcome := optionInfo.bind (Info.toFailureMode targetInfo)
     optionOutcome.getD (dflt := ⟨targetInfo, none, some .notFound⟩)
 
+/-- Deep-copy a universe level, rebuilding every node from scratch.
+This breaks references to corrupted Level objects (e.g., via unsafeCast). -/
+partial def rebuildLevel : Level → Level
+  | .zero => .zero
+  | .succ l => .succ (rebuildLevel l)
+  | .max l1 l2 => .max (rebuildLevel l1) (rebuildLevel l2)
+  | .imax l1 l2 => .imax (rebuildLevel l1) (rebuildLevel l2)
+  | .param n => .param n
+  | .mvar id => .mvar id
+
 /-- Deep-copy an expression, rebuilding every node from scratch.
 This breaks references to compacted regions whose runtime representation
 may have been corrupted (e.g., via unsafeCast at elaboration time). -/
@@ -78,8 +88,8 @@ partial def rebuildExpr : Expr → Expr
   | .bvar i => .bvar i
   | .fvar id => .fvar id
   | .mvar id => .mvar id
-  | .sort l => .sort l
-  | .const n ls => .const n ls
+  | .sort l => .sort (rebuildLevel l)
+  | .const n ls => .const n (ls.map rebuildLevel)
   | .lit (.natVal n) => .lit (.natVal n)
   | .lit (.strVal s) => .lit (.strVal s)
   | .app f a => .app (rebuildExpr f) (rebuildExpr a)
