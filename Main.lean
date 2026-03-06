@@ -229,6 +229,9 @@ def validateNewDefinitionNatLiterals
         | .defnInfo d => #[d.type, d.value]
         | .thmInfo t => #[t.type, t.value]
         | .opaqueInfo o => #[o.type, o.value]
+        | .inductInfo i => #[i.type]
+        | .ctorInfo c => #[c.type]
+        | .recInfo r => #[r.type]
         | _ => #[]
       for e in exprs do
         for (n, shown) in collectNatLiterals e do
