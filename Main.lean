@@ -73,11 +73,17 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Nam
 
 /-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
 the theorems and definitions in the file. -/
-def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
+def replayFile (filePath : System.FilePath) (disallowPartial : Bool) (checkImports : Bool := false) : IO (HashMap Name Info) := do
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
   let (mod, _) ← readModuleData filePath
+  -- Safety check: reject submission files with no imports (prelude files can redefine kernel types)
+  if checkImports then
+    if mod.imports.isEmpty then
+      throw <| IO.userError s!"'{filePath}' has no imports (possible prelude file). Submissions must import Init to prevent kernel type redefinition."
+    unless mod.imports.any (·.module == `Init) do
+      IO.eprintln s!"Warning: '{filePath}' does not import Init directly. This may indicate a prelude-based attack."
   let env ← importModules mod.imports {} 0
   IO.println "Finished setting up the environement."
   let mut newConstants := {}
@@ -138,7 +144,7 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
   IO.println "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
-  let submissionInfo ← replayFile submissionFile disallowPartial
+  let submissionInfo ← replayFile submissionFile disallowPartial (checkImports := true)
   for (n, info) in submissionInfo do
     if !checkAxioms info then
       throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
