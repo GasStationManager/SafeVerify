@@ -71,8 +71,48 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Nam
     let optionOutcome := optionInfo.bind (Info.toFailureMode targetInfo)
     optionOutcome.getD (dflt := ⟨targetInfo, none, some .notFound⟩)
 
-/-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
-the theorems and definitions in the file. -/
+/-- Deep-copy a universe level, rebuilding every node from scratch.
+This breaks references to corrupted Level objects (e.g., via unsafeCast). -/
+partial def rebuildLevel : Level → Level
+  | .zero => .zero
+  | .succ l => .succ (rebuildLevel l)
+  | .max l1 l2 => .max (rebuildLevel l1) (rebuildLevel l2)
+  | .imax l1 l2 => .imax (rebuildLevel l1) (rebuildLevel l2)
+  | .param n => .param n
+  | .mvar id => .mvar id
+
+/-- Deep-copy an expression, rebuilding every node from scratch.
+This breaks references to compacted regions whose runtime representation
+may have been corrupted (e.g., via unsafeCast at elaboration time). -/
+partial def rebuildExpr : Expr → Expr
+  | .bvar i => .bvar i
+  | .fvar id => .fvar id
+  | .mvar id => .mvar id
+  | .sort l => .sort (rebuildLevel l)
+  | .const n ls => .const n (ls.map rebuildLevel)
+  | .lit (.natVal n) => .lit (.natVal n)
+  | .lit (.strVal s) => .lit (.strVal s)
+  | .app f a => .app (rebuildExpr f) (rebuildExpr a)
+  | .lam n t b bi => .lam n (rebuildExpr t) (rebuildExpr b) bi
+  | .forallE n t b bi => .forallE n (rebuildExpr t) (rebuildExpr b) bi
+  | .letE n t v b nd => .letE n (rebuildExpr t) (rebuildExpr v) (rebuildExpr b) nd
+  | .mdata m e => .mdata m (rebuildExpr e)
+  | .proj s i e => .proj s i (rebuildExpr e)
+
+/-- Sanitize a ConstantInfo by rebuilding all literals in its value/type.
+This ensures the kernel re-evaluates literals from scratch during replay. -/
+def sanitizeConstant : ConstantInfo → ConstantInfo
+  | .defnInfo d => .defnInfo { d with
+      type := rebuildExpr d.type
+      value := rebuildExpr d.value }
+  | .thmInfo t => .thmInfo { t with
+      type := rebuildExpr t.type
+      value := rebuildExpr t.value }
+  | .opaqueInfo o => .opaqueInfo { o with
+      type := rebuildExpr o.type
+      value := rebuildExpr o.value }
+  | ci => ci
+
 def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
   IO.println s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
@@ -86,9 +126,23 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
       throw <| IO.userError s!"unsafe constant {name} detected"
     if disallowPartial && ci.isPartial then
       throw <| IO.userError s!"partial constant {name} detected"
-    newConstants := newConstants.insert name ci
+    newConstants := newConstants.insert name (sanitizeConstant ci)
   let env ← env.replay newConstants
   IO.println s!"Finished replay. Found {newConstants.size} declarations."
+  -- Verify theorem proofs using kernel typechecker with rebuilt expressions.
+  -- This catches attacks where corrupted compacted-region values (e.g., from
+  -- unsafeCast at elaboration time) cause the kernel to accept invalid proofs.
+  for name in mod.constNames, ci in mod.constants do
+    if let .thmInfo t := ci then
+      let freshValue := rebuildExpr t.value
+      let freshType := rebuildExpr t.type
+      match Kernel.check env {} freshValue with
+      | .ok inferredType =>
+        match Kernel.isDefEq env {} inferredType freshType with
+        | .ok true => pure ()
+        | _ => throw <| IO.userError s!"kernel verification failed for '{name}': inferred type does not match declared type"
+      | .error _ =>
+        throw <| IO.userError s!"kernel verification failed for '{name}': proof term rejected by kernel typechecker (possible unsafeCast or compacted-region corruption)"
   return processFileDeclarations env
 
 /-- Print verbose information about a type mismatch between two constants. -/
@@ -154,6 +208,36 @@ def checkImportSuperset (submissionFile : System.FilePath)
   unless missing.isEmpty do
     throw <| IO.userError s!"Submission '{submissionFile}' is missing imports required by target: {missing}. Submissions must import at least everything the target imports to prevent type redefinition attacks."
 
+/-- Recursively find all Nat literals in an expression. -/
+partial def collectNatLiterals : Expr → Array (Nat × String)
+  | .lit (.natVal n) =>
+    let shown := toString (Expr.lit (.natVal n))
+    #[(n, shown)]
+  | .app f a => collectNatLiterals f ++ collectNatLiterals a
+  | .lam _ t b _ => collectNatLiterals t ++ collectNatLiterals b
+  | .forallE _ t b _ => collectNatLiterals t ++ collectNatLiterals b
+  | .letE _ t v b _ => collectNatLiterals t ++ collectNatLiterals v ++ collectNatLiterals b
+  | .mdata _ e => collectNatLiterals e
+  | .proj _ _ e => collectNatLiterals e
+  | _ => #[]
+
+def validateNewDefinitionNatLiterals
+    (targetInfos submissionInfos : HashMap Name Info) : IO Unit := do
+  for (name, info) in submissionInfos do
+    if targetInfos.get? name |>.isNone then
+      let exprs := match info.constInfo with
+        | .defnInfo d => #[d.type, d.value]
+        | .thmInfo t => #[t.type, t.value]
+        | .opaqueInfo o => #[o.type, o.value]
+        | .inductInfo i => #[i.type]
+        | .ctorInfo c => #[c.type]
+        | .recInfo r => #[r.type]
+        | _ => #[]
+      for e in exprs do
+        for (n, shown) in collectNatLiterals e do
+          if shown.startsWith "-" then
+            throw <| IO.userError s!"suspicious Nat literal in new declaration '{name}': stored natVal={n} but renders as '{shown}' (possible unsafeCast corruption)"
+
 def runSafeVerify (targetFile submissionFile : System.FilePath)
     (disallowPartial : Bool) (verbose : Bool := false) : IO (HashMap Name SafeVerifyOutcome) := do
   -- Import superset check: submission must import everything the target does
@@ -164,6 +248,7 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
   let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
   let submissionInfo ← replayFile submissionFile disallowPartial
+  validateNewDefinitionNatLiterals targetInfo submissionInfo
   for (n, info) in submissionInfo do
     if !checkAxioms info then
       throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
