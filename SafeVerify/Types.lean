@@ -33,6 +33,10 @@ inductive CheckFailure
   | defnCheck
   /-- Used when the declaration is opaque but has a different type or value to the target. -/
   | opaqueCheck
+  /-- Used when the declaration is an inductive but doesn't match the target. --/
+  | inductCheck
+  /-- Used when the declaration is a constructor but doesn't match the target. --/
+  | ctorCheck
   /-- Used when the value of a declaration uses a forbiden axiom. -/
   | axioms
   /-- Used when the corresponding target declaration wasn't found.-/

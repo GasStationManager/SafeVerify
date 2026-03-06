@@ -26,7 +26,7 @@ a hashmap storing the infos corresponding to all the theorems and definitions in
 def processFileDeclarations (env : Environment) : HashMap Name Info := Id.run do
   let mut out : HashMap Name Info := {}
   for (_, ci) in env.constants.map₂  do
-    if ci.kind ∈ ["theorem", "def", "opaque"] then
+    if ci.kind ∈ ["theorem", "def", "opaque", "inductive", "constructor"] then
       let (_, s) := (CollectAxioms.collect ci.name).run env |>.run {}
       out := out.insert ci.name ⟨ci, s.axioms⟩
   return out
@@ -42,6 +42,8 @@ def Info.toFailureMode (target submission : Info) : Option SafeVerifyOutcome := 
     return some ⟨target, submission, some .defnCheck⟩
   if submission.constInfo.kind == "opaque" && !equivOpaq target.constInfo submission.constInfo then
     return some ⟨target, submission, some .opaqueCheck⟩
+  if submission.constInfo.kind == "constructor" && !equivCtor target.constInfo submission.constInfo then
+    return some ⟨target, submission, some .ctorCheck⟩
   if !checkAxioms submission then
     return some ⟨target, submission, some .axioms⟩
   return some ⟨target, submission, none⟩
@@ -49,8 +51,23 @@ def Info.toFailureMode (target submission : Info) : Option SafeVerifyOutcome := 
 /-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
 value if they are definitions). -/
 def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Name SafeVerifyOutcome :=
+  -- Create lookup functions for equivInduct (needs access to full hashmaps for constructor lookup)
+  let lookupTarget := fun n => targetInfos.get? n |>.map (·.constInfo)
+  let lookupNew := fun n => submissionInfos.get? n |>.map (·.constInfo)
   targetInfos.map fun _ targetInfo ↦ Id.run do
     let optionInfo := submissionInfos.get? targetInfo.constInfo.name
+    -- For inductives, check via equivInduct which needs the full hashmaps for constructor lookup
+    if targetInfo.constInfo.kind == "inductive" then
+      if let some submissionInfo := optionInfo then
+        if targetInfo.constInfo.kind ≠ submissionInfo.constInfo.kind then
+          return ⟨targetInfo, some submissionInfo, some <| .kind targetInfo.constInfo.kind submissionInfo.constInfo.kind⟩
+        if !equivInduct targetInfo.constInfo submissionInfo.constInfo lookupTarget lookupNew then
+          return ⟨targetInfo, some submissionInfo, some .inductCheck⟩
+        if !checkAxioms submissionInfo then
+          return ⟨targetInfo, some submissionInfo, some .axioms⟩
+        return ⟨targetInfo, some submissionInfo, none⟩
+      else
+        return ⟨targetInfo, none, some .notFound⟩
     let optionOutcome := optionInfo.bind (Info.toFailureMode targetInfo)
     optionOutcome.getD (dflt := ⟨targetInfo, none, some .notFound⟩)
 
