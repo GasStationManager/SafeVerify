@@ -198,18 +198,32 @@ def checkImportSuperset (submissionFile : System.FilePath)
   unless missing.isEmpty do
     throw <| IO.userError s!"Submission '{submissionFile}' is missing imports required by target: {missing}. Submissions must import at least everything the target imports to prevent type redefinition attacks."
 
-/-- Validate Nat literals in newly introduced helper definitions.
-Reject suspicious Nat literals that print as negative numbers (can arise from
-unsafeCast-based corruption during elaboration). -/
+/-- Recursively find all Nat literals in an expression. -/
+partial def collectNatLiterals : Expr → Array (Nat × String)
+  | .lit (.natVal n) =>
+    let shown := toString (Expr.lit (.natVal n))
+    #[(n, shown)]
+  | .app f a => collectNatLiterals f ++ collectNatLiterals a
+  | .lam _ t b _ => collectNatLiterals t ++ collectNatLiterals b
+  | .forallE _ t b _ => collectNatLiterals t ++ collectNatLiterals b
+  | .letE _ t v b _ => collectNatLiterals t ++ collectNatLiterals v ++ collectNatLiterals b
+  | .mdata _ e => collectNatLiterals e
+  | .proj _ _ e => collectNatLiterals e
+  | _ => #[]
+
 def validateNewDefinitionNatLiterals
     (targetInfos submissionInfos : HashMap Name Info) : IO Unit := do
   for (name, info) in submissionInfos do
     if targetInfos.get? name |>.isNone then
-      if let .defnInfo d := info.constInfo then
-        if let .lit (.natVal n) := d.value then
-          let shown := toString d.value
+      let exprs := match info.constInfo with
+        | .defnInfo d => #[d.type, d.value]
+        | .thmInfo t => #[t.type, t.value]
+        | .opaqueInfo o => #[o.type, o.value]
+        | _ => #[]
+      for e in exprs do
+        for (n, shown) in collectNatLiterals e do
           if shown.startsWith "-" then
-            throw <| IO.userError s!"suspicious Nat literal in new definition '{name}': stored natVal={n} but renders as '{shown}' (possible unsafeCast corruption)"
+            throw <| IO.userError s!"suspicious Nat literal in new declaration '{name}': stored natVal={n} but renders as '{shown}' (possible unsafeCast corruption)"
 
 def runSafeVerify (targetFile submissionFile : System.FilePath)
     (disallowPartial : Bool) (verbose : Bool := false) : IO (HashMap Name SafeVerifyOutcome) := do
