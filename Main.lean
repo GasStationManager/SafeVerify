@@ -194,9 +194,11 @@ def readImports (filePath : System.FilePath) : IO (Array Import) := do
 
 /-- Check that submission imports are a superset of target imports.
 This prevents attacks where submissions omit imports to redefine types. -/
-def checkImportSuperset (submissionFile : System.FilePath)
+def checkImportSuperset (targetFile submissionFile : System.FilePath)
     (targetImports submissionImports : Array Import) : IO Unit := do
-  -- Reject empty imports (prelude attack)
+  -- Both target and submission must import Init
+  unless targetImports.any (·.module == `Init) do
+    throw <| IO.userError s!"Target '{targetFile}' does not import Init. Refusing to verify against a prelude-based target."
   if submissionImports.isEmpty then
     throw <| IO.userError s!"'{submissionFile}' has no imports (possible prelude file). Submissions must import Init to prevent kernel type redefinition."
   -- Check that every target import appears in submission imports
@@ -243,7 +245,7 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
   -- Import superset check: submission must import everything the target does
   let targetImports ← readImports targetFile
   let submissionImports ← readImports submissionFile
-  checkImportSuperset submissionFile targetImports submissionImports
+  checkImportSuperset targetFile submissionFile targetImports submissionImports
   IO.println "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
   IO.println "------------------"
