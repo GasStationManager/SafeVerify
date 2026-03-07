@@ -5,20 +5,11 @@ https://github.com/kim-em/lean-training-data/blob/master/scripts/declaration_typ
 -/
 
 import SafeVerify
+import SafeVerify.Monads
 import Lean
 import Cli
 
--- TODO(Paul-Lez): it would be nice to do things monadically here!
-
 open Lean Meta Core SafeVerify
-
-def AllowedAxioms := [`propext, `Quot.sound, `Classical.choice]
-
-def checkAxioms (info : Info) : Bool := Id.run do
-  for a in info.axioms do
-    if a ∉ AllowedAxioms then return false
-  return true
-
 open Std
 
 /-- Takes the environment obtained after replaying all the constant in a file and outputs
@@ -31,10 +22,15 @@ def processFileDeclarations (env : Environment) : HashMap Name Info := Id.run do
       out := out.insert ci.name ⟨ci, s.axioms⟩
   return out
 
-def Info.toFailureMode (target submission : Info) : Option SafeVerifyOutcome := Id.run do
+/-- Check if an Info uses only allowed axioms -/
+def checkAxioms (info : Info) (allowedAxioms : Array Name) : Bool := Id.run do
+  for a in info.axioms do
+    if a ∉ allowedAxioms then return false
+  return true
+
+def Info.toFailureMode (target submission : Info) (allowedAxioms : Array Name) : Option SafeVerifyOutcome := Id.run do
   if target.constInfo.kind ≠ submission.constInfo.kind then
     return some ⟨target, submission, some <| .kind target.constInfo.kind submission.constInfo.kind⟩
-  -- This is a little hacky since it would be better to avoid string matching but let's deal with that later.
   if submission.constInfo.kind == "theorem" && !equivThm target.constInfo submission.constInfo then
     return some ⟨target, submission, some .thmType⟩
   if submission.constInfo.kind == "def"
@@ -44,18 +40,18 @@ def Info.toFailureMode (target submission : Info) : Option SafeVerifyOutcome := 
     return some ⟨target, submission, some .opaqueCheck⟩
   if submission.constInfo.kind == "constructor" && !equivCtor target.constInfo submission.constInfo then
     return some ⟨target, submission, some .ctorCheck⟩
-  if !checkAxioms submission then
+  if !checkAxioms submission allowedAxioms then
     return some ⟨target, submission, some .axioms⟩
   return some ⟨target, submission, none⟩
 
-/-- Takes two arrays of `Info` and check that the declarations match (i.e. same kind, same type, and same
-value if they are definitions). -/
-def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Name SafeVerifyOutcome :=
-  -- Create lookup functions for equivInduct (needs access to full hashmaps for constructor lookup)
-  let lookupTarget := fun n => targetInfos.get? n |>.map (·.constInfo)
-  let lookupNew := fun n => submissionInfos.get? n |>.map (·.constInfo)
-  targetInfos.map fun _ targetInfo ↦ Id.run do
-    let optionInfo := submissionInfos.get? targetInfo.constInfo.name
+/-- Check that the declarations match. Reads Settings and Decls from context, updates State with outcomes. -/
+def checkTargets : SafeVerifyM Unit := do
+  let settings ← getSettings
+  let decls ← getDecls
+  let lookupTarget := fun n => decls.targetDecls.get? n |>.map (·.constInfo)
+  let lookupNew := fun n => decls.submissionDecls.get? n |>.map (·.constInfo)
+  let checkOutcome := decls.targetDecls.map fun _ targetInfo ↦ Id.run do
+    let optionInfo := decls.submissionDecls.get? targetInfo.constInfo.name
     -- For inductives, check via equivInduct which needs the full hashmaps for constructor lookup
     if targetInfo.constInfo.kind == "inductive" then
       if let some submissionInfo := optionInfo then
@@ -63,13 +59,14 @@ def checkTargets (targetInfos submissionInfos : HashMap Name Info) : HashMap Nam
           return ⟨targetInfo, some submissionInfo, some <| .kind targetInfo.constInfo.kind submissionInfo.constInfo.kind⟩
         if !equivInduct targetInfo.constInfo submissionInfo.constInfo lookupTarget lookupNew then
           return ⟨targetInfo, some submissionInfo, some .inductCheck⟩
-        if !checkAxioms submissionInfo then
+        if !checkAxioms submissionInfo settings.allowedAxioms then
           return ⟨targetInfo, some submissionInfo, some .axioms⟩
         return ⟨targetInfo, some submissionInfo, none⟩
       else
         return ⟨targetInfo, none, some .notFound⟩
-    let optionOutcome := optionInfo.bind (Info.toFailureMode targetInfo)
+    let optionOutcome := optionInfo.bind (Info.toFailureMode targetInfo · settings.allowedAxioms)
     optionOutcome.getD (dflt := ⟨targetInfo, none, some .notFound⟩)
+  modify fun s => { s with checkOutcomes := checkOutcome }
 
 /-- Deep-copy a universe level, rebuilding every node from scratch.
 This breaks references to corrupted Level objects (e.g., via unsafeCast). -/
@@ -99,8 +96,7 @@ partial def rebuildExpr : Expr → Expr
   | .mdata m e => .mdata m (rebuildExpr e)
   | .proj s i e => .proj s i (rebuildExpr e)
 
-/-- Sanitize a ConstantInfo by rebuilding all literals in its value/type.
-This ensures the kernel re-evaluates literals from scratch during replay. -/
+/-- Sanitize a ConstantInfo by rebuilding all expressions from scratch. -/
 def sanitizeConstant : ConstantInfo → ConstantInfo
   | .defnInfo d => .defnInfo { d with
       type := rebuildExpr d.type
@@ -113,6 +109,8 @@ def sanitizeConstant : ConstantInfo → ConstantInfo
       value := rebuildExpr o.value }
   | ci => ci
 
+/-- Replays a lean file and outputs a hashmap storing the `Info`s corresponding to
+the theorems and definitions in the file. -/
 def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
   IO.eprintln s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
@@ -130,8 +128,6 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
   let env ← env.replay newConstants
   IO.eprintln s!"Finished replay. Found {newConstants.size} declarations."
   -- Verify theorem proofs using kernel typechecker with rebuilt expressions.
-  -- This catches attacks where corrupted compacted-region values (e.g., from
-  -- unsafeCast at elaboration time) cause the kernel to accept invalid proofs.
   for name in mod.constNames, ci in mod.constants do
     if let .thmInfo t := ci then
       let freshValue := rebuildExpr t.value
@@ -144,6 +140,72 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
       | .error _ =>
         throw <| IO.userError s!"kernel verification failed for '{name}': proof term rejected by kernel typechecker (possible unsafeCast or compacted-region corruption)"
   return processFileDeclarations env
+
+/-- Replays the target (challenge) file and extracts declarations. -/
+def replayChallenges : ReaderT SafeVerify.Settings IO (HashMap Name Info) := do
+  let settings ← read
+  replayFile settings.targetFile settings.disallowPartial
+
+/-- Replays the submission (solution) file and extracts declarations. -/
+def replaySolutions : ReaderT SafeVerify.Settings IO (HashMap Name Info) := do
+  let settings ← read
+  replayFile settings.submissionFile settings.disallowPartial
+
+/-- Read module imports from an olean file without full replay. -/
+def readImports (filePath : System.FilePath) : IO (Array Import) := do
+  unless (← filePath.pathExists) do
+    throw <| IO.userError s!"object file '{filePath}' does not exist"
+  let (mod, _) ← readModuleData filePath
+  return mod.imports
+
+/-- Check that submission imports are a superset of target imports.
+This prevents attacks where submissions omit imports to redefine types. -/
+def checkImportSuperset (targetFile submissionFile : System.FilePath)
+    (targetImports submissionImports : Array Import) : IO Unit := do
+  -- Both target and submission must import Init
+  unless targetImports.any (·.module == `Init) do
+    throw <| IO.userError s!"Target '{targetFile}' does not import Init. Refusing to verify against a prelude-based target."
+  if submissionImports.isEmpty then
+    throw <| IO.userError s!"'{submissionFile}' has no imports (possible prelude file). Submissions must import Init to prevent kernel type redefinition."
+  let submissionModules := submissionImports.map (·.module)
+  let mut missing : Array Name := #[]
+  for imp in targetImports do
+    unless submissionModules.contains imp.module do
+      missing := missing.push imp.module
+  unless missing.isEmpty do
+    throw <| IO.userError s!"Submission '{submissionFile}' is missing imports required by target: {missing}. Submissions must import at least everything the target imports to prevent type redefinition attacks."
+
+/-- Recursively find all Nat literals in an expression. -/
+partial def collectNatLiterals : Expr → Array (Nat × String)
+  | .lit (.natVal n) =>
+    let shown := toString (Expr.lit (.natVal n))
+    #[(n, shown)]
+  | .app f a => collectNatLiterals f ++ collectNatLiterals a
+  | .lam _ t b _ => collectNatLiterals t ++ collectNatLiterals b
+  | .forallE _ t b _ => collectNatLiterals t ++ collectNatLiterals b
+  | .letE _ t v b _ => collectNatLiterals t ++ collectNatLiterals v ++ collectNatLiterals b
+  | .mdata _ e => collectNatLiterals e
+  | .proj _ _ e => collectNatLiterals e
+  | _ => #[]
+
+/-- Validate Nat literals in newly introduced declarations.
+Reject suspicious Nat literals that print as negative (unsafeCast corruption). -/
+def validateNewDefinitionNatLiterals
+    (targetInfos submissionInfos : HashMap Name Info) : IO Unit := do
+  for (name, info) in submissionInfos do
+    if targetInfos.get? name |>.isNone then
+      let exprs := match info.constInfo with
+        | .defnInfo d => #[d.type, d.value]
+        | .thmInfo t => #[t.type, t.value]
+        | .opaqueInfo o => #[o.type, o.value]
+        | .inductInfo i => #[i.type]
+        | .ctorInfo c => #[c.type]
+        | .recInfo r => #[r.type]
+        | _ => #[]
+      for e in exprs do
+        for (n, shown) in collectNatLiterals e do
+          if shown.startsWith "-" then
+            throw <| IO.userError s!"suspicious Nat literal in new declaration '{name}': stored natVal={n} but renders as '{shown}' (possible unsafeCast corruption)"
 
 /-- Print verbose information about a type mismatch between two constants. -/
 def printVerboseTypeMismatch (targetConst submissionConst : ConstantInfo) : IO Unit := do
@@ -187,86 +249,30 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
     if tval₁.value != tval₂.value then
       IO.eprintln s!"  Value mismatch (values differ)"
 
-/-- Read module imports from an olean file without full replay. -/
-def readImports (filePath : System.FilePath) : IO (Array Import) := do
-  unless (← filePath.pathExists) do
-    throw <| IO.userError s!"object file '{filePath}' does not exist"
-  let (mod, _) ← readModuleData filePath
-  return mod.imports
+/-- Run the main SafeVerify check. Uses the three-layer monadic design with Settings, Decls, and State. -/
+def runSafeVerify : SafeVerifyM Unit := do
+  let settings ← getSettings
+  let decls ← getDecls
 
-/-- Check that submission imports are a superset of target imports.
-This prevents attacks where submissions omit imports to redefine types. -/
-def checkImportSuperset (targetFile submissionFile : System.FilePath)
-    (targetImports submissionImports : Array Import) : IO Unit := do
-  -- Both target and submission must import Init
-  unless targetImports.any (·.module == `Init) do
-    throw <| IO.userError s!"Target '{targetFile}' does not import Init. Refusing to verify against a prelude-based target."
-  if submissionImports.isEmpty then
-    throw <| IO.userError s!"'{submissionFile}' has no imports (possible prelude file). Submissions must import Init to prevent kernel type redefinition."
-  -- Check that every target import appears in submission imports
-  let submissionModules := submissionImports.map (·.module)
-  let mut missing : Array Name := #[]
-  for imp in targetImports do
-    unless submissionModules.contains imp.module do
-      missing := missing.push imp.module
-  unless missing.isEmpty do
-    throw <| IO.userError s!"Submission '{submissionFile}' is missing imports required by target: {missing}. Submissions must import at least everything the target imports to prevent type redefinition attacks."
-
-/-- Recursively find all Nat literals in an expression. -/
-partial def collectNatLiterals : Expr → Array (Nat × String)
-  | .lit (.natVal n) =>
-    let shown := toString (Expr.lit (.natVal n))
-    #[(n, shown)]
-  | .app f a => collectNatLiterals f ++ collectNatLiterals a
-  | .lam _ t b _ => collectNatLiterals t ++ collectNatLiterals b
-  | .forallE _ t b _ => collectNatLiterals t ++ collectNatLiterals b
-  | .letE _ t v b _ => collectNatLiterals t ++ collectNatLiterals v ++ collectNatLiterals b
-  | .mdata _ e => collectNatLiterals e
-  | .proj _ _ e => collectNatLiterals e
-  | _ => #[]
-
-def validateNewDefinitionNatLiterals
-    (targetInfos submissionInfos : HashMap Name Info) : IO Unit := do
-  for (name, info) in submissionInfos do
-    if targetInfos.get? name |>.isNone then
-      let exprs := match info.constInfo with
-        | .defnInfo d => #[d.type, d.value]
-        | .thmInfo t => #[t.type, t.value]
-        | .opaqueInfo o => #[o.type, o.value]
-        | .inductInfo i => #[i.type]
-        | .ctorInfo c => #[c.type]
-        | .recInfo r => #[r.type]
-        | _ => #[]
-      for e in exprs do
-        for (n, shown) in collectNatLiterals e do
-          if shown.startsWith "-" then
-            throw <| IO.userError s!"suspicious Nat literal in new declaration '{name}': stored natVal={n} but renders as '{shown}' (possible unsafeCast corruption)"
-
-def runSafeVerify (targetFile submissionFile : System.FilePath)
-    (disallowPartial : Bool) (verbose : Bool := false) :
-    IO <| (HashMap Name SafeVerifyOutcome) × Bool := do
-  let mut hasFailures := false
-  -- Import superset check: submission must import everything the target does
-  let targetImports ← readImports targetFile
-  let submissionImports ← readImports submissionFile
-  checkImportSuperset targetFile submissionFile targetImports submissionImports
   IO.eprintln "------------------"
-  let targetInfo ← replayFile targetFile disallowPartial
-  IO.eprintln "------------------"
-  let submissionInfo ← replayFile submissionFile disallowPartial
-  validateNewDefinitionNatLiterals targetInfo submissionInfo
-  for (n, info) in submissionInfo do
-    if !checkAxioms info then
+  -- Check for disallowed axioms and record violations in state
+  for (n, info) in decls.submissionDecls do
+    if !checkAxioms info settings.allowedAxioms then
+      let disallowed := info.axioms.filter (· ∉ settings.allowedAxioms)
       IO.eprintln s!"{n} used disallowed axioms. {info.axioms}"
-      hasFailures := true
-  let checkOutcome := checkTargets targetInfo submissionInfo
+      modify fun s => { s with axiomViolations := s.axiomViolations.push (n, disallowed) }
+
+  -- Run the declaration checks and store outcomes in state
+  checkTargets
   IO.eprintln "------------------"
 
+  -- Print results
+  let state ← get
+  let checkOutcome := state.checkOutcomes
   for (name, outcome) in checkOutcome do
     if let some failure := outcome.failureMode then
-      hasFailures := true
-      IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}: {failure}"
-      if verbose then
+      IO.eprintln s!"Found a problem in {settings.submissionFile} with declaration {name}: {failure}"
+      if settings.verbose then
         match failure with
         | .thmType =>
           if let some submissionConst := outcome.solutionInfo then
@@ -278,17 +284,25 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
           if let some submissionConst := outcome.solutionInfo then
             printVerboseOpaqueMismatch outcome.targetInfo.constInfo submissionConst.constInfo
         | .axioms =>
-          if let some submissionInfo := submissionInfo.get? name then
-            IO.eprintln s!"  Disallowed axioms used: {submissionInfo.axioms.filter (· ∉ AllowedAxioms)}"
+          if let some info := decls.submissionDecls.get? name then
+            IO.eprintln s!"  Disallowed axioms used: {info.axioms.filter (· ∉ settings.allowedAxioms)}"
         | _ => pure ()
   IO.eprintln "------------------"
-  return (checkOutcome, hasFailures)
 
 open Cli
 
 instance : ParseableType System.FilePath where
   name := "System.FilePath"
   parse? str := some { toString := str }
+
+/-- Convert parsed CLI arguments to SafeVerify Settings -/
+def settingsFromParsed (p : Parsed) : SafeVerify.Settings where
+  targetFile := p.positionalArg! "target" |>.as! System.FilePath
+  submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
+  disallowPartial := p.hasFlag "disallow-partial"
+  verbose := p.hasFlag "verbose"
+  allowedAxioms := #[`propext, `Quot.sound, `Classical.choice]
+  jsonOutputPath := p.flag? "save" |>.map (·.as! System.FilePath)
 
 /--
 Takes two olean files, and checks whether the second file
@@ -301,20 +315,44 @@ Checks the second file's theorems to make sure they only use the three standard 
 def runMain (p : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
   IO.eprintln s!"Currently running on Lean v{Lean.versionString}"
-  let disallowPartial := p.hasFlag "disallow-partial"
-  let verbose := p.hasFlag "verbose"
-  let targetFile := p.positionalArg! "target" |>.as! System.FilePath
-  let submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
-  IO.eprintln s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
-  let (output, hasFailures) ← runSafeVerify targetFile submissionFile disallowPartial verbose
-  let jsonOutput := ToJson.toJson output.toArray
-  if let some jsonPathFlag := p.flag? "save" then
-    let jsonPath := jsonPathFlag.as! System.FilePath
+
+  -- Create settings from CLI arguments
+  let settings := settingsFromParsed p
+  IO.eprintln s!"Running SafeVerify on target file: {settings.targetFile} and submission file: {settings.submissionFile}."
+
+  -- Import superset check: submission must import everything the target does
+  let targetImports ← readImports settings.targetFile
+  let submissionImports ← readImports settings.submissionFile
+  checkImportSuperset settings.targetFile settings.submissionFile targetImports submissionImports
+
+  -- Replay files to get declarations (runs in ReaderT Settings IO)
+  IO.eprintln "------------------"
+  let targetDecls ← replayChallenges.run settings
+  IO.eprintln "------------------"
+  let submissionDecls ← replaySolutions.run settings
+
+  -- Validate Nat literals in new declarations
+  validateNewDefinitionNatLiterals targetDecls submissionDecls
+
+  -- Create the Decls context
+  let decls : SafeVerify.Decls := { targetDecls := targetDecls, submissionDecls := submissionDecls }
+
+  -- Run the main SafeVerify check (runs in ReaderT Settings (ReaderT Decls (StateT State IO)))
+  let (_, finalState) ← (runSafeVerify.run settings |>.run decls |>.run {})
+
+  -- Save JSON output if requested (always, even on failure)
+  if let some jsonPath := settings.jsonOutputPath then
+    let jsonOutput := ToJson.toJson finalState.checkOutcomes.toArray
     IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
-  if hasFailures then
+
+  -- Check for failures: both check outcomes and axiom violations
+  let hasCheckFailures := finalState.checkOutcomes.any fun _ outcome =>
+    outcome.failureMode.isSome
+  let hasAxiomViolations := !finalState.axiomViolations.isEmpty
+  if hasCheckFailures || hasAxiomViolations then
     let nonVerboseMsg :=
       " For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
-    throw <| IO.userError s!"SafeVerify check failed.{if !verbose then nonVerboseMsg else ""}"
+    throw <| IO.userError s!"SafeVerify check failed.{if !settings.verbose then nonVerboseMsg else ""}"
   else
     IO.eprintln "SafeVerify check passed."
   return 0
@@ -324,7 +362,6 @@ functionalities.-/
 def mainCmd : Cmd := `[Cli|
   mainCmd VIA runMain;
   "Run SafeVerify on a pair of files (TargetFile, SubmissionFile). "
-  -- TODO: add flags to control which axioms and allowed and so on.
   FLAGS:
     "disallow-partial"; "Disallow partial definitions"
     v, "verbose"; "Enable verbose error messages showing detailed type information"
