@@ -20,16 +20,19 @@ structure Settings where
   allowedAxioms : Array Name := #[`propext, `Quot.sound, `Classical.choice]
   /-- Optional path to save JSON output -/
   jsonOutputPath : Option System.FilePath := none
+  /-- Whether to allow disproof submissions (i.e. `foo.disproof` naming convention) -/
+  allowDisproofs : Bool := false
 deriving Inhabited
 
-/-- Parsed declarations from target and submission files.
+/-- Parsed declarations from target and submission files, plus the target environment.
     This is computed once and then read-only. -/
 structure Decls where
   /-- Declarations parsed from the target file -/
   targetDecls : Std.HashMap Name Info := {}
   /-- Declarations parsed from the submission file -/
   submissionDecls : Std.HashMap Name Info := {}
-deriving Inhabited
+  /-- The Lean environment before replaying the target file, needed for disproof checking -/
+  env : Environment
 
 /-- Mutable state maintained during the SafeVerify check process. -/
 structure State where
