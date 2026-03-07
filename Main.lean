@@ -114,12 +114,12 @@ def sanitizeConstant : ConstantInfo → ConstantInfo
   | ci => ci
 
 def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashMap Name Info) := do
-  IO.println s!"Replaying {filePath}"
+  IO.eprintln s!"Replaying {filePath}"
   unless (← filePath.pathExists) do
     throw <| IO.userError s!"object file '{filePath}' does not exist"
   let (mod, _) ← readModuleData filePath
   let env ← importModules mod.imports {} 0
-  IO.println "Finished setting up the environement."
+  IO.eprintln "Finished setting up the environment."
   let mut newConstants := {}
   for name in mod.constNames, ci in mod.constants do
     if ci.isUnsafe then
@@ -128,7 +128,7 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
       throw <| IO.userError s!"partial constant {name} detected"
     newConstants := newConstants.insert name (sanitizeConstant ci)
   let env ← env.replay newConstants
-  IO.println s!"Finished replay. Found {newConstants.size} declarations."
+  IO.eprintln s!"Finished replay. Found {newConstants.size} declarations."
   -- Verify theorem proofs using kernel typechecker with rebuilt expressions.
   -- This catches attacks where corrupted compacted-region values (e.g., from
   -- unsafeCast at elaboration time) cause the kernel to accept invalid proofs.
@@ -181,6 +181,8 @@ def printVerboseOpaqueMismatch (targetConst submissionConst : ConstantInfo) : IO
     IO.eprintln s!"    Got:      {submissionConst.levelParams}"
   if let (.opaqueInfo tval₁, .opaqueInfo tval₂) := (targetConst, submissionConst) then
     if tval₁.isUnsafe != tval₂.isUnsafe then
+      -- TODO(Paul-Lez): currently this will never occur because we throw an error whenever we reach an unsafe constant - fix this?
+      -- probably we should track disallowed opaque (and partial) constant in a CheckFailureField.
       IO.eprintln s!"  Safety mismatch: expected isUnsafe={tval₁.isUnsafe}, got isUnsafe={tval₂.isUnsafe}"
     if tval₁.value != tval₂.value then
       IO.eprintln s!"  Value mismatch (values differ)"
@@ -241,25 +243,28 @@ def validateNewDefinitionNatLiterals
             throw <| IO.userError s!"suspicious Nat literal in new declaration '{name}': stored natVal={n} but renders as '{shown}' (possible unsafeCast corruption)"
 
 def runSafeVerify (targetFile submissionFile : System.FilePath)
-    (disallowPartial : Bool) (verbose : Bool := false) : IO (HashMap Name SafeVerifyOutcome) := do
+    (disallowPartial : Bool) (verbose : Bool := false) :
+    IO <| (HashMap Name SafeVerifyOutcome) × Bool := do
+  let mut hasFailures := false
   -- Import superset check: submission must import everything the target does
   let targetImports ← readImports targetFile
   let submissionImports ← readImports submissionFile
   checkImportSuperset targetFile submissionFile targetImports submissionImports
-  IO.println "------------------"
+  IO.eprintln "------------------"
   let targetInfo ← replayFile targetFile disallowPartial
-  IO.println "------------------"
+  IO.eprintln "------------------"
   let submissionInfo ← replayFile submissionFile disallowPartial
   validateNewDefinitionNatLiterals targetInfo submissionInfo
   for (n, info) in submissionInfo do
     if !checkAxioms info then
-      throw <| IO.userError s!"{n} used disallowed axioms. {info.axioms}"
+      IO.eprintln s!"{n} used disallowed axioms. {info.axioms}"
+      hasFailures := true
   let checkOutcome := checkTargets targetInfo submissionInfo
-  IO.println "------------------"
-  let mut hasErrors := false
+  IO.eprintln "------------------"
+
   for (name, outcome) in checkOutcome do
     if let some failure := outcome.failureMode then
-      hasErrors := true
+      hasFailures := true
       IO.eprintln s!"Found a problem in {submissionFile} with declaration {name}: {failure}"
       if verbose then
         match failure with
@@ -276,11 +281,8 @@ def runSafeVerify (targetFile submissionFile : System.FilePath)
           if let some submissionInfo := submissionInfo.get? name then
             IO.eprintln s!"  Disallowed axioms used: {submissionInfo.axioms.filter (· ∉ AllowedAxioms)}"
         | _ => pure ()
-  IO.println "------------------"
-  if hasErrors then
-    throw <| IO.userError s!"SafeVerify check failed for {submissionFile}"
-  IO.println s!"Finished."
-  return checkOutcome
+  IO.eprintln "------------------"
+  return (checkOutcome, hasFailures)
 
 open Cli
 
@@ -298,17 +300,23 @@ Checks the second file's theorems to make sure they only use the three standard 
 -/
 def runMain (p : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
-  IO.println s!"Currently running on Lean v{Lean.versionString}"
+  IO.eprintln s!"Currently running on Lean v{Lean.versionString}"
   let disallowPartial := p.hasFlag "disallow-partial"
   let verbose := p.hasFlag "verbose"
   let targetFile := p.positionalArg! "target" |>.as! System.FilePath
   let submissionFile := p.positionalArg! "submission" |>.as! System.FilePath
-  IO.println s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
-  let output ← runSafeVerify targetFile submissionFile disallowPartial verbose
+  IO.eprintln s!"Running SafeVerify on target file: {targetFile} and submission file: {submissionFile}."
+  let (output, hasFailures) ← runSafeVerify targetFile submissionFile disallowPartial verbose
   let jsonOutput := ToJson.toJson output.toArray
-  let some jsonPathFlag := p.flag? "save" | return 0
-  let jsonPath := jsonPathFlag.as! System.FilePath
-  IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
+  if let some jsonPathFlag := p.flag? "save" then
+    let jsonPath := jsonPathFlag.as! System.FilePath
+    IO.FS.writeFile jsonPath (ToString.toString jsonOutput)
+  if hasFailures then
+    let nonVerboseMsg :=
+      " For more diagnostic information about failures, run safe_verify with the -v (or --verbose) flag."
+    throw <| IO.userError s!"SafeVerify check failed.{if !verbose then nonVerboseMsg else ""}"
+  else
+    IO.eprintln "SafeVerify check passed."
   return 0
 
 /-- The main CLI interface for `SafeVerify`. This will be expanded as we add more
