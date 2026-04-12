@@ -1,5 +1,4 @@
 import SafeVerify.Types
-import Mathlib.Tactic.Push
 import Lean
 
 open Lean SafeVerify
@@ -93,22 +92,44 @@ def equivInduct (ctarget cnew : ConstantInfo)
 
 open Elab Meta Term Tactic
 
+structure NegateConfig where
+  distrib : Bool := false
+deriving Inhabited
+
+private def negateExpr (cfg : NegateConfig) (e : Expr) : MetaM Expr := do
+  let e := (← instantiateMVars e).cleanupAnnotations
+  handler e
+where handler (e : Expr) : MetaM Expr := do
+  match e with
+  | .app (.app (.const ``And _) p) q =>
+    if cfg.distrib then
+      return (mkOr (← handler p) (← handler q))
+    else
+      return (.forallE `_  p (← handler  q) .default)
+  | .forallE name ty body binfo =>
+    let body' : Expr := .lam name ty (← handler body) binfo
+    return (← mkAppM ``Exists #[body'])
+  | .app (.app (.const ``Or _) p) q =>
+    return (mkAnd (← handler p) (← handler q))
+  | .app (.app (.const ``Exists _) _) (.lam name btype body binfo) =>
+    return .forallE name btype (← handler body) binfo
+  | .lam name btype body binfo =>
+    return .lam name btype (← handler body) binfo
+  -- handle `≠` separately
+  | .app (.app (.app (.const ``Ne lvls) α) p) q =>
+    return .app (.app (.app (.const ``Eq lvls) α) p) q
+  | .app (.const ``Not _) p =>
+    return p
+  | _ =>
+    return mkNot e
+
 def checkNegatedTheorem {m} [Monad m] [MonadLiftT CoreM m]
     (ctarget cnew : ConstantInfo) : m Bool :=
   -- We run in MetaM but don't really need any context
   Lean.Meta.MetaM.run' do
   unless ctarget.levelParams == cnew.levelParams do return false
   let targetType := ctarget.type
-  let negatedType ← Meta.mkAppM ``Not #[targetType]
-  let eqNeg ← Meta.mkAppM ``Eq #[negatedType, cnew.type]
-  let pfTacs ← `(term| by push_neg; rfl)
-  try
-    let runTacs : TermElabM Expr := elabTermAndSynthesize pfTacs eqNeg
-    let (goalMVar, _) ← runTacs.run
-    let .ok proofType := Lean.Kernel.check (← getEnv) (← getLCtx) goalMVar | return false
-    IO.eprintln "Checked disproof."
-    match Lean.Kernel.isDefEq (← getEnv) (← getLCtx) proofType eqNeg with
-    | .error _ => return false
-    | .ok bool => return bool
-  catch _ =>
-    return false
+  let negatedType ← negateExpr default targetType
+  match Lean.Kernel.isDefEq (← getEnv) (← getLCtx) negatedType cnew.type with
+  | .error _ =>  return false
+  | .ok bool => return bool
