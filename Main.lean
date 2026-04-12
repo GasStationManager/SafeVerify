@@ -178,6 +178,38 @@ def replaySolutions : ReaderT SafeVerify.Settings IO (HashMap Name Info) := do
   let (decls, _) ← replayFile settings.submissionFile settings.disallowPartial
   return decls
 
+/-- Replay a file and return both the new-declaration HashMap AND the full Environment.
+Used for the submission so we can look up imported declarations as a fallback. -/
+def replayFileWithEnv (filePath : System.FilePath) (disallowPartial : Bool)
+    : IO (HashMap Name Info × Environment) := do
+  IO.eprintln s!"Replaying {filePath}"
+  unless (← filePath.pathExists) do
+    throw <| IO.userError s!"object file '{filePath}' does not exist"
+  let (mod, _) ← readModuleData filePath
+  let env ← importModules mod.imports {} 0
+  IO.eprintln "Finished setting up the environment."
+  let mut newConstants := {}
+  for name in mod.constNames, ci in mod.constants do
+    if ci.isUnsafe then
+      throw <| IO.userError s!"unsafe constant {name} detected"
+    if disallowPartial && ci.isPartial then
+      throw <| IO.userError s!"partial constant {name} detected"
+    newConstants := newConstants.insert name (sanitizeConstant ci)
+  let env ← env.replay newConstants
+  IO.eprintln s!"Finished replay. Found {newConstants.size} declarations."
+  for name in mod.constNames, ci in mod.constants do
+    if let .thmInfo t := ci then
+      let freshValue := rebuildExpr t.value
+      let freshType := rebuildExpr t.type
+      match Kernel.check env {} freshValue with
+      | .ok inferredType =>
+        match Kernel.isDefEq env {} inferredType freshType with
+        | .ok true => pure ()
+        | _ => throw <| IO.userError s!"kernel verification failed for '{name}': inferred type does not match declared type"
+      | .error _ =>
+        throw <| IO.userError s!"kernel verification failed for '{name}': proof term rejected by kernel typechecker (possible unsafeCast or compacted-region corruption)"
+  return (processFileDeclarations env, env)
+
 /-- Read module imports from an olean file without full replay. -/
 def readImports (filePath : System.FilePath) : IO (Array Import) := do
   unless (← filePath.pathExists) do
@@ -185,8 +217,11 @@ def readImports (filePath : System.FilePath) : IO (Array Import) := do
   let (mod, _) ← readModuleData filePath
   return mod.imports
 
-/-- Check that submission imports are a superset of target imports.
-This prevents attacks where submissions omit imports to redefine types. -/
+/-- Check that submission's transitive imports cover all of target's transitive imports.
+This prevents attacks where submissions omit imports to redefine types.
+Both sides are resolved to their full transitive module sets (from Environment.header),
+so multi-file repos that transitively include Mathlib pass correctly, and barrel imports
+like `import Mathlib` are expanded to the individual modules they bring in. -/
 def checkImportSuperset (targetFile submissionFile : System.FilePath)
     (targetImports submissionImports : Array Import) : IO Unit := do
   -- Both target and submission must import Init
@@ -194,13 +229,22 @@ def checkImportSuperset (targetFile submissionFile : System.FilePath)
     throw <| IO.userError s!"Target '{targetFile}' does not import Init. Refusing to verify against a prelude-based target."
   if submissionImports.isEmpty then
     throw <| IO.userError s!"'{submissionFile}' has no imports (possible prelude file). Submissions must import Init to prevent kernel type redefinition."
-  let submissionModules := submissionImports.map (·.module)
+  -- Build both environments to get transitive module sets
+  let targetEnv ← importModules targetImports {} 0
+  let submissionEnv ← importModules submissionImports {} 0
+  let submissionModuleSet : Std.HashSet Name :=
+    submissionEnv.header.moduleNames.foldl (init := {}) fun s n => s.insert n
   let mut missing : Array Name := #[]
-  for imp in targetImports do
-    unless submissionModules.contains imp.module do
-      missing := missing.push imp.module
+  for mod in targetEnv.header.moduleNames do
+    unless submissionModuleSet.contains mod do
+      missing := missing.push mod
   unless missing.isEmpty do
-    throw <| IO.userError s!"Submission '{submissionFile}' is missing imports required by target: {missing}. Submissions must import at least everything the target imports to prevent type redefinition attacks."
+    -- Report only first few to avoid overwhelming output
+    let shown := if missing.size > 10 then
+      s!"{missing[:10]} ... and {missing.size - 10} more"
+    else
+      s!"{missing}"
+    throw <| IO.userError s!"Submission '{submissionFile}' is missing {missing.size} transitive imports required by target: {shown}. Submissions must transitively import at least everything the target imports to prevent type redefinition attacks."
 
 /-- Recursively find all Nat literals in an expression. -/
 partial def collectNatLiterals : Expr → Array (Nat × String)
@@ -357,7 +401,21 @@ def runMain (p : Parsed) : IO UInt32 := do
   IO.eprintln "------------------"
   let (targetDecls, env) ← replayChallenges.run settings
   IO.eprintln "------------------"
-  let submissionDecls ← replaySolutions.run settings
+  let (submissionDecls, submissionEnv) ← replayFileWithEnv settings.submissionFile settings.disallowPartial
+
+  -- Supplement submissionDecls with imported declarations that the target also defines.
+  -- This handles the case where the spec replicates definitions that in the impl are in
+  -- imported modules (e.g., spec defines Problem6.graphLaplacian, impl imports it from
+  -- an auxiliary module). Without this, SafeVerify would report "not found" because it
+  -- only sees the impl module's own new constants (map₂), not imported ones (map₁).
+  let mut supplementedDecls := submissionDecls
+  for (name, _) in targetDecls do
+    if submissionDecls.get? name |>.isNone then
+      if let some ci := submissionEnv.find? name then
+        if ci.kind ∈ ["theorem", "def", "opaque", "inductive", "constructor"] then
+          let (_, s) := (CollectAxioms.collect name).run submissionEnv |>.run {}
+          supplementedDecls := supplementedDecls.insert name ⟨ci, s.axioms⟩
+          IO.eprintln s!"  Note: '{name}' found in submission's imported environment"
 
   -- Validate Nat literals in new declarations
   validateNewDefinitionNatLiterals targetDecls submissionDecls
