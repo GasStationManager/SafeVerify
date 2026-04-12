@@ -96,6 +96,8 @@ structure NegateConfig where
   distrib : Bool := false
 deriving Inhabited
 
+/-- Takes an expression `e` and outputs the negation of `e`, pushing `not` accross
+`e`. For example, occurences of `¬ ∀ a, p a` are replaced by `∃ a, ¬ p a`. -/
 private def negateExpr (cfg : NegateConfig) (e : Expr) : MetaM Expr := do
   let e := (← instantiateMVars e).cleanupAnnotations
   handler e
