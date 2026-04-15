@@ -22,6 +22,13 @@ def processFileDeclarations (env : Environment) : HashMap Name Info := Id.run do
       out := out.insert ci.name ⟨ci, s.axioms⟩
   return out
 
+/-- Lean generates auxiliary `_unsafe_rec` runtime shims for ordinary accepted
+recursive definitions. These are compiler artifacts, not evidence that the user
+wrote `partial`. -/
+def isCompilerUnsafeRecName : Name → Bool
+  | .str _ s => s == "_unsafe_rec"
+  | _ => false
+
 /-- Check if an Info uses only allowed axioms -/
 def checkAxioms (info : Info) (allowedAxioms : Array Name) : Bool := Id.run do
   for a in info.axioms do
@@ -122,7 +129,7 @@ def replayFile (filePath : System.FilePath) (disallowPartial : Bool) : IO (HashM
   for name in mod.constNames, ci in mod.constants do
     if ci.isUnsafe then
       throw <| IO.userError s!"unsafe constant {name} detected"
-    if disallowPartial && ci.isPartial then
+    if disallowPartial && ci.isPartial && !isCompilerUnsafeRecName name then
       throw <| IO.userError s!"partial constant {name} detected"
     newConstants := newConstants.insert name (sanitizeConstant ci)
   let env ← env.replay newConstants
@@ -165,7 +172,7 @@ def replayFileWithEnv (filePath : System.FilePath) (disallowPartial : Bool)
   for name in mod.constNames, ci in mod.constants do
     if ci.isUnsafe then
       throw <| IO.userError s!"unsafe constant {name} detected"
-    if disallowPartial && ci.isPartial then
+    if disallowPartial && ci.isPartial && !isCompilerUnsafeRecName name then
       throw <| IO.userError s!"partial constant {name} detected"
     newConstants := newConstants.insert name (sanitizeConstant ci)
   let env ← env.replay newConstants
