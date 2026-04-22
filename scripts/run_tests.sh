@@ -41,10 +41,11 @@ run_test() {
     local target_olean="$2"
     local submission_olean="$3"
     local expected_result="$4"  # "pass" or "fail"
-    
+    local extra_flags="${5:-}"   # optional extra flags (e.g. "--disproofs")
+
     echo "Running test: $test_name (expecting: $expected_result)"
-    
-    if lake exe safe_verify "$target_olean" "$submission_olean" >/dev/null 2>&1; then
+
+    if lake exe safe_verify $extra_flags "$target_olean" "$submission_olean" >/dev/null 2>&1; then
         actual_result="pass"
     else
         actual_result="fail"
@@ -140,6 +141,18 @@ main() {
         if [ -f "$test_dir/Maybe.lean" ]; then
             echo -e "${YELLOW}Skipping Maybe.lean for $test_name (undefined expected behavior)${NC}"
             SKIPPED=$((SKIPPED + 1))
+        fi
+
+        # Process Solution.lean files (disproof test, should pass with --disproofs)
+        if [ -f "$test_dir/Solution.lean" ]; then
+            solution_file="$test_dir/Solution.lean"
+            solution_olean="${solution_file%.lean}.olean"
+            if compile_lean "$solution_file"; then
+                run_test "$test_name/Solution" "$target_olean" "$solution_olean" "pass" "--disproofs" || true
+            else
+                echo -e "${RED}Failed to compile Solution.lean for $test_name${NC}"
+                SETUP_FAILED=1
+            fi
         fi
         
         echo ""

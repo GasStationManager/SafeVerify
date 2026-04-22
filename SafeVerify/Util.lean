@@ -1,4 +1,5 @@
 import SafeVerify.Types
+import Lean
 
 open Lean SafeVerify
 
@@ -88,3 +89,49 @@ def equivInduct (ctarget cnew : ConstantInfo)
     unless equivCtor ctor₁ ctor₂ do return false
 
   return true
+
+open Elab Meta Term Tactic
+
+structure NegateConfig where
+  distrib : Bool := false
+deriving Inhabited
+
+/-- Takes an expression `e` and outputs the negation of `e`, pushing `not` accross
+`e`. For example, occurences of `¬ ∀ a, p a` are replaced by `∃ a, ¬ p a`. -/
+private def negateExpr (cfg : NegateConfig) (e : Expr) : MetaM Expr := do
+  let e := (← instantiateMVars e).cleanupAnnotations
+  handler e
+where handler (e : Expr) : MetaM Expr := do
+  match e with
+  | .app (.app (.const ``And _) p) q =>
+    if cfg.distrib then
+      return (mkOr (← handler p) (← handler q))
+    else
+      return (.forallE `_  p (← handler  q) .default)
+  | .forallE name ty body binfo =>
+    let body' : Expr := .lam name ty (← handler body) binfo
+    return (← mkAppM ``Exists #[body'])
+  | .app (.app (.const ``Or _) p) q =>
+    return (mkAnd (← handler p) (← handler q))
+  | .app (.app (.const ``Exists _) _) (.lam name btype body binfo) =>
+    return .forallE name btype (← handler body) binfo
+  | .lam name btype body binfo =>
+    return .lam name btype (← handler body) binfo
+  -- handle `≠` separately
+  | .app (.app (.app (.const ``Ne lvls) α) p) q =>
+    return .app (.app (.app (.const ``Eq lvls) α) p) q
+  | .app (.const ``Not _) p =>
+    return p
+  | _ =>
+    return mkNot e
+
+def checkNegatedTheorem {m} [Monad m] [MonadLiftT CoreM m]
+    (ctarget cnew : ConstantInfo) : m Bool :=
+  -- We run in MetaM but don't really need any context
+  Lean.Meta.MetaM.run' do
+  unless ctarget.levelParams == cnew.levelParams do return false
+  let targetType := ctarget.type
+  let negatedType ← negateExpr default targetType
+  match Lean.Kernel.isDefEq (← getEnv) (← getLCtx) negatedType cnew.type with
+  | .error _ =>  return false
+  | .ok bool => return bool
